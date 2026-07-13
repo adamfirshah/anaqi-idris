@@ -146,28 +146,35 @@ export default function App() {
           </>
         )}
 
-        {status === 'ok' && countdown && (
-          <>
-            <p className="cd-label">Next feeding in</p>
-            <p className="cd-time">
-              {countdown.h > 0 && <><span>{countdown.h}</span><small>h </small></>}
-              <span>{countdown.m}</span><small>m</small>
-            </p>
-            <p className="cd-sub">
-              at {formatTime(nextFeedTs!)} · last fed {formatElapsed(now - lastFeeding!.timestamp)}
-            </p>
-          </>
-        )}
+        {status === 'ok' && (() => {
+          // In OK state: count down to the PREPARE time (1h30m after last feed)
+          const prepareTs = lastFeeding!.timestamp + FEED_INTERVAL_MS - PREPARE_WARN_MS
+          const cd = formatCountdown(prepareTs - now)
+          return (
+            <>
+              <p className="cd-label">Can prepare in</p>
+              <p className="cd-time">
+                {cd.h > 0 && <><span>{cd.h}</span><small>h </small></>}
+                <span>{cd.m}</span><small>m</small>
+              </p>
+              <div className="cd-rows">
+                <div className="cd-row"><span>prep milk</span><span>{formatTime(nextFeedTs! - PREPARE_WARN_MS)}</span></div>
+                <div className="cd-row"><span>next feed</span><span>{formatTime(nextFeedTs!)}</span></div>
+                <div className="cd-row"><span>last fed</span><span>{formatTime(lastFeeding!.timestamp)}</span></div>
+              </div>
+            </>
+          )
+        })()}
 
         {status === 'prepare' && countdown && (
           <>
-            <p className="cd-label">🍼 Prepare milk now!</p>
+            <p className="cd-label">🍼 Can Prepare!</p>
             <p className="cd-time">
               {countdown.h > 0 && <><span>{countdown.h}</span><small>h </small></>}
               <span>{countdown.m}</span><small>m</small>
             </p>
             <p className="cd-sub">
-              Feed at {formatTime(nextFeedTs!)} · last fed {formatElapsed(now - lastFeeding!.timestamp)}
+              next feed {formatTime(nextFeedTs!)} · {countdown.m}m away
             </p>
           </>
         )}
@@ -180,7 +187,7 @@ export default function App() {
               <span>{countdown.m}</span><small>m</small>
             </p>
             <p className="cd-sub">
-              Last fed at {formatTime(lastFeeding!.timestamp)} · {formatElapsed(now - lastFeeding!.timestamp)}
+              last fed {formatTime(lastFeeding!.timestamp)} · {formatElapsed(now - lastFeeding!.timestamp)}
             </p>
           </>
         )}
@@ -190,7 +197,7 @@ export default function App() {
       {status === 'prepare' && (
         <div className="prepare-banner">
           <span className="prepare-icon">⏱️</span>
-          <span>Time to warm the bottle — feed due in under 30 min</span>
+          <span>Time to warm the bottle — next feed in under 30 min</span>
         </div>
       )}
 
@@ -270,11 +277,9 @@ export default function App() {
 
         {/* Time preview */}
         <div className="time-preview">
-          <span className="time-preview-label">⏰ Last Feed:</span>
-          <span className="time-preview-val">{formatTime(now)}</span>
-          <span className="time-preview-next">
-            → next feed ~{formatTime(now + FEED_INTERVAL_MS)}
-          </span>
+          <span className="time-preview-label">Last fed was</span>
+          <span className="time-preview-val">{formatTime(lastFeeding!.timestamp)}</span>
+          <span className="time-preview-next">→ next feed ~{formatTime(now + FEED_INTERVAL_MS)}</span>
         </div>
 
         <button
