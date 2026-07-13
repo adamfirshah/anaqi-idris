@@ -277,7 +277,7 @@ export default function App() {
 
         {/* Time preview */}
         <div className="time-preview">
-          <span className="time-preview-label">Last fed was</span>
+          <span className="time-preview-label">Last fed was </span>
           <span className="time-preview-val">{formatTime(lastFeeding!.timestamp)}</span>
           <span className="time-preview-next">→ next feed ~{formatTime(now + FEED_INTERVAL_MS)}</span>
         </div>
