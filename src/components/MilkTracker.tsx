@@ -10,6 +10,7 @@ import {
 } from '../lib/format'
 import type { FamilyInfo, Feeding, FeedingRow, MilkType } from '../types/database'
 import { rowToFeeding, feedingDisplayNote } from '../types/database'
+import { usePushNotifications } from '../hooks/usePushNotifications'
 import '../App.css'
 import '../Auth.css'
 
@@ -44,6 +45,7 @@ export default function MilkTracker({ session, family, onSignOut }: Props) {
   const [justLogged, setJustLogged] = useState(false)
   const [activeTab, setActiveTab] = useState<'today' | 'history'>('today')
   const [error, setError] = useState('')
+  const { notiStatus, notiError, enableNotifications } = usePushNotifications(session.user.id)
 
   const fetchFeedings = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -165,6 +167,13 @@ export default function MilkTracker({ session, family, onSignOut }: Props) {
         </header>
         <div className="header-actions">
           <span className="invite-pill">Code: {family.inviteCode}</span>
+          {notiStatus === 'on' ? (
+            <span className="noti-on-pill">🔔 On</span>
+          ) : (
+            <button type="button" className="noti-btn" onClick={enableNotifications}>
+              🔔 Enable alerts
+            </button>
+          )}
           <button type="button" className="sign-out-btn" onClick={onSignOut}>
             Sign out
           </button>
@@ -172,6 +181,7 @@ export default function MilkTracker({ session, family, onSignOut }: Props) {
       </div>
 
       {error && <p className="auth-error" style={{ marginBottom: '0.75rem' }}>{error}</p>}
+      {notiError && <p className="auth-error" style={{ marginBottom: '0.75rem' }}>{notiError}</p>}
 
       <div className={`card countdown-card status-${status}`}>
         {status === 'none' && (

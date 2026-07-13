@@ -210,6 +210,26 @@
   color: #64748b;
 }
 
+.noti-btn {
+  border: none;
+  background: #eef2ff;
+  color: #6366f1;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.noti-on-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #16a34a;
+  background: #dcfce7;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+}
+
 .sync-status {
   font-size: 0.72rem;
   color: #94a3b8;
