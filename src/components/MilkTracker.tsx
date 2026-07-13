@@ -33,9 +33,10 @@ interface Props {
   session: Session
   family: FamilyInfo
   onSignOut: () => void
+  showSignOut?: boolean
 }
 
-export default function MilkTracker({ session, family, onSignOut }: Props) {
+export default function MilkTracker({ session, family, onSignOut, showSignOut = true }: Props) {
   const [feedings, setFeedings] = useState<Feeding[]>([])
   const [loading, setLoading] = useState(true)
   const [oz, setOz] = useState('3')
@@ -174,9 +175,11 @@ export default function MilkTracker({ session, family, onSignOut }: Props) {
               🔔 Enable alerts
             </button>
           )}
-          <button type="button" className="sign-out-btn" onClick={onSignOut}>
-            Sign out
-          </button>
+          {showSignOut && (
+            <button type="button" className="sign-out-btn" onClick={onSignOut}>
+              Sign out
+            </button>
+          )}
         </div>
       </div>
 

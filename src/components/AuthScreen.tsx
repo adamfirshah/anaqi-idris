@@ -4,7 +4,11 @@ import '../Auth.css'
 
 type Mode = 'login' | 'signup'
 
-export default function AuthScreen() {
+interface Props {
+  onBack: () => void
+}
+
+export default function AuthScreen({ onBack }: Props) {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -83,6 +87,10 @@ export default function AuthScreen() {
             {loading ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Create account'}
           </button>
         </form>
+
+        <button type="button" className="auth-link-btn" onClick={onBack}>
+          ← Back to invite code
+        </button>
       </div>
     </div>
   )

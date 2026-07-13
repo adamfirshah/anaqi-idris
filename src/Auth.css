@@ -230,6 +230,25 @@
   border-radius: 999px;
 }
 
+.auth-link-btn {
+  width: 100%;
+  margin-top: 1rem;
+  border: none;
+  background: transparent;
+  color: #6366f1;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.5rem;
+}
+
+.auth-footnote {
+  text-align: center;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  margin: 0.75rem 0 0;
+}
+
 .sync-status {
   font-size: 0.72rem;
   color: #94a3b8;

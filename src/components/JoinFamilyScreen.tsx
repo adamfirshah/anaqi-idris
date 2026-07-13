@@ -7,28 +7,9 @@ interface Props {
 }
 
 export default function JoinFamilyScreen({ onJoined }: Props) {
-  const [inviteCode, setInviteCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [createdCode, setCreatedCode] = useState<string | null>(null)
-
-  const joinFamily = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-
-    const { error: joinError } = await supabase.rpc('join_family_by_code', {
-      p_invite_code: inviteCode.trim(),
-    })
-
-    if (joinError) {
-      setError(joinError.message)
-      setLoading(false)
-      return
-    }
-
-    onJoined()
-  }
 
   const createFamily = async () => {
     setLoading(true)
@@ -72,38 +53,19 @@ export default function JoinFamilyScreen({ onJoined }: Props) {
       <div className="auth-card">
         <div className="auth-header">
           <span className="auth-emoji">👨‍👩‍👦</span>
-          <h1>Join Anaqi's family</h1>
-          <p>Enter the invite code from your partner, or create a new family.</p>
+          <h1>First-time setup</h1>
+          <p>Create Anaqi's family and get an invite code for Mummy.</p>
         </div>
 
-        <form onSubmit={joinFamily} className="auth-form">
-          <label>
-            Invite code
-            <input
-              type="text"
-              value={inviteCode}
-              onChange={e => setInviteCode(e.target.value.toUpperCase())}
-              placeholder="e.g. A1B2C3D4"
-              required
-            />
-          </label>
-
-          {error && <p className="auth-error">{error}</p>}
-
-          <button type="submit" className="auth-submit" disabled={loading}>
-            {loading ? 'Joining…' : 'Join family'}
-          </button>
-        </form>
-
-        <div className="auth-divider">or</div>
+        {error && <p className="auth-error">{error}</p>}
 
         <button
           type="button"
-          className="auth-secondary"
+          className="auth-submit"
           onClick={createFamily}
           disabled={loading}
         >
-          Create new family (first time setup)
+          {loading ? 'Creating…' : 'Create family'}
         </button>
       </div>
     </div>
