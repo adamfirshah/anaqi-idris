@@ -273,7 +273,7 @@ export default function MilkTracker({ session, family, onSignOut, showSignOut = 
       </div>
 
       <div className="card log-card">
-        <h2 className="card-title">Berapa banyak Anaqi Idris minum??</h2>
+        <h2 className="card-title">Berapa banyak Idris minum??</h2>
 
         <p className="section-label">Amount</p>
         <div className="oz-row">
