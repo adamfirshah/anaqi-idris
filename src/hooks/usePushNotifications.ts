@@ -31,7 +31,7 @@ export function usePushNotifications(userId: string | undefined) {
     if (!messaging) return
     listenerReady.current = true
     onMessage(messaging, payload => {
-      const title = payload.notification?.title ?? "Anaqi's Milk"
+      const title = payload.notification?.title ?? "Anaqi Idris's Milk"
       const body = payload.notification?.body ?? ''
       if (document.visibilityState === 'visible') {
         new Notification(title, { body, icon: '/icon.png' })

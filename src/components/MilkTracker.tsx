@@ -39,7 +39,7 @@ interface Props {
 export default function MilkTracker({ session, family, onSignOut, showSignOut = true }: Props) {
   const [feedings, setFeedings] = useState<Feeding[]>([])
   const [loading, setLoading] = useState(true)
-  const [oz, setOz] = useState('3')
+  const [oz, setOz] = useState('2.5')
   const [milkType, setMilkType] = useState<MilkType | ''>('FM')
   const [note, setNote] = useState('')
   const [now, setNow] = useState(Date.now())
@@ -156,7 +156,7 @@ export default function MilkTracker({ session, family, onSignOut, showSignOut = 
         <header className="header" style={{ marginBottom: 0 }}>
           <img src="/icon.png" alt="Anaqi" className="auth-icon" style={{ width: 48, height: 48 }} />
           <div>
-            <h1 className="header-title">Anaqi Idris's Milk</h1>
+            <h1 className="header-title">Anaqi Idris's Susu</h1>
             <p className="header-sub">
               {new Date().toLocaleDateString('en-MY', {
                 weekday: 'long',
@@ -200,15 +200,15 @@ export default function MilkTracker({ session, family, onSignOut, showSignOut = 
           const cd = formatCountdown(prepareTs - now)
           return (
             <>
-              <p className="cd-label">Can prepare in</p>
+              <p className="cd-label">Prep susu sebelum idris nangis</p>
               <p className="cd-time">
                 {cd.h > 0 && <><span>{cd.h}</span><small>h </small></>}
-                <span>{cd.m}</span><small>m</small>
+                <span>{cd.m}</span><small> m</small>
               </p>
               <div className="cd-rows">
-                <div className="cd-row"><span>prep milk</span><span>{formatTime(nextFeedTs - PREPARE_WARN_MS)}</span></div>
-                <div className="cd-row"><span>next feed</span><span>{formatTime(nextFeedTs)}</span></div>
-                <div className="cd-row"><span>last fed</span><span>{formatTime(lastFeeding.timestamp)}</span></div>
+                <div className="cd-row"><span>Standby susu </span><span>{formatTime(nextFeedTs - PREPARE_WARN_MS)}</span></div>
+                <div className="cd-row"><span>Next feed in</span><span>{formatTime(nextFeedTs)}</span></div>
+                <div className="cd-row"><span>Last fed</span><span>{formatTime(lastFeeding.timestamp)}</span></div>
               </div>
             </>
           )
@@ -264,10 +264,16 @@ export default function MilkTracker({ session, family, onSignOut, showSignOut = 
           </span>
           <p className="stat-label">Last fed</p>
         </div>
+        <div className="stat-box">
+          <span className="stat-value">
+            {nextFeedTs ? formatTime(nextFeedTs) : '—'}
+          </span>
+          <p className="stat-label">Next feed</p>
+        </div>
       </div>
 
       <div className="card log-card">
-        <h2 className="card-title">How much did Anaqi drink?</h2>
+        <h2 className="card-title">Berapa banyak Anaqi Idris minum?</h2>
 
         <p className="section-label">Amount</p>
         <div className="oz-row">
@@ -298,7 +304,7 @@ export default function MilkTracker({ session, family, onSignOut, showSignOut = 
           <span className="oz-unit">oz</span>
         </div>
 
-        <p className="section-label">Milk type</p>
+        <p className="section-label">Susu type</p>
         <div className="milk-type-row">
           {MILK_TYPES.map(t => (
             <button
@@ -317,7 +323,7 @@ export default function MilkTracker({ session, family, onSignOut, showSignOut = 
           className="note-input"
           value={note}
           onChange={e => setNote(e.target.value)}
-          placeholder="Extra note (optional)"
+          placeholder="remark"
           maxLength={80}
         />
 

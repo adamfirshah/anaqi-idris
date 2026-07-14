@@ -32,7 +32,7 @@ export default defineConfig(({ mode }) => ({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icon.png', 'firebase-messaging-sw.js', 'firebase-sw-config.js'],
       manifest: {
-        name: "Anaqi's Milk Tracker",
+        name: "Anaqi Idris's Milk Tracker",
         short_name: 'Milk Tracker',
         description: 'Track baby milk feedings for Anaqi Idris',
         theme_color: '#6366f1',

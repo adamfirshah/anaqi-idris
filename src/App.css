@@ -99,7 +99,7 @@
 
 .cd-row span:first-child {
   opacity: 0.7;
-  text-transform: lowercase;
+  text-transform: capitalize;
 }
 
 .cd-row span:last-child {
@@ -126,7 +126,7 @@
 /* ─── Stats row ──────────────────────────────────────────────── */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 0.625rem;
   margin-bottom: 0.875rem;
 }

@@ -54,7 +54,7 @@ export default function JoinFamilyScreen({ onJoined }: Props) {
         <div className="auth-header">
           <span className="auth-emoji">👨‍👩‍👦</span>
           <h1>First-time setup</h1>
-          <p>Create Anaqi's family and get an invite code for Mummy.</p>
+          <p>Create Anaqi Idris's family and get an invite code for Mummy.</p>
         </div>
 
         {error && <p className="auth-error">{error}</p>}
