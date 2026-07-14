@@ -216,7 +216,7 @@ export default function MilkTracker({ session, family, onSignOut, showSignOut = 
 
         {status === 'prepare' && countdown && nextFeedTs && (
           <>
-            <p className="cd-label">🍼 Can Prepare!</p>
+            <p className="cd-label">🍼 Prepare Now!</p>
             <p className="cd-time">
               {countdown.h > 0 && <><span>{countdown.h}</span><small>h </small></>}
               <span>{countdown.m}</span><small>m</small>
@@ -244,7 +244,7 @@ export default function MilkTracker({ session, family, onSignOut, showSignOut = 
       {status === 'prepare' && (
         <div className="prepare-banner">
           <span className="prepare-icon">⏱️</span>
-          <span>Time to warm the bottle — next feed in under 30 min</span>
+          <span>Time to bancuh & panaskan susu - and ready to feed him </span>
         </div>
       )}
 
