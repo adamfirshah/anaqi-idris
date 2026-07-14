@@ -17,6 +17,8 @@ export default function App() {
 
   if (authLoading || familyLoading) return <LoadingScreen />
 
+
+  
   // Logged in + in family → straight to tracker
   if (session && hasFamily && family) {
     return (
