@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getToken, onMessage } from 'firebase/messaging'
 import { getMessagingInstance, VAPID_KEY } from '../lib/firebase'
+import { iosPushBlockedReason, registerFirebaseServiceWorker } from '../lib/push'
 import { supabase } from '../lib/supabase'
 
 const ALERTS_ENABLED_KEY = 'anaqi-alerts-enabled'
@@ -23,7 +24,15 @@ export function usePushNotifications(userId: string | undefined) {
     localStorage.getItem(ALERTS_ENABLED_KEY) === '1' ? 'on' : 'off',
   )
   const [notiError, setNotiError] = useState('')
+  const [iosHint, setIosHint] = useState('')
+  const [testCountdown, setTestCountdown] = useState<number | null>(null)
   const listenerReady = useRef(false)
+
+  useEffect(() => {
+    const blocked = iosPushBlockedReason()
+    if (blocked) setIosHint(blocked)
+    registerFirebaseServiceWorker().catch(() => {})
+  }, [])
 
   const setupForegroundListener = useCallback(async () => {
     if (listenerReady.current) return
@@ -43,6 +52,13 @@ export function usePushNotifications(userId: string | undefined) {
     async (requestPermission: boolean) => {
       if (!userId) return false
       setNotiError('')
+
+      const iosBlocked = iosPushBlockedReason()
+      if (iosBlocked) {
+        setIosHint(iosBlocked)
+        setNotiError(iosBlocked)
+        return false
+      }
 
       if (!('Notification' in window)) {
         setNotiStatus('unsupported')
@@ -72,7 +88,12 @@ export function usePushNotifications(userId: string | undefined) {
         return false
       }
 
-      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+      const registration = await registerFirebaseServiceWorker()
+      if (!registration) {
+        setNotiError('Could not register notification service worker')
+        return false
+      }
+
       const token = await getToken(messaging, {
         vapidKey: VAPID_KEY,
         serviceWorkerRegistration: registration,
@@ -111,5 +132,45 @@ export function usePushNotifications(userId: string | undefined) {
     await syncToken(true)
   }, [syncToken])
 
-  return { notiStatus, notiError, enableNotifications }
+  const testNotification = useCallback(async () => {
+    setNotiError('')
+
+    if (Notification.permission !== 'granted') {
+      setNotiError('Enable alerts first, then test')
+      return
+    }
+
+    await syncToken(false)
+
+    for (let i = 5; i >= 1; i--) {
+      setTestCountdown(i)
+      await new Promise(r => setTimeout(r, 1000))
+    }
+    setTestCountdown(null)
+
+    const { data, error } = await supabase.functions.invoke('send-test-notification')
+
+    if (error) {
+      try {
+        const reg = await navigator.serviceWorker.ready
+        await reg.showNotification('🍼 Test notification', {
+          body: 'Local test only — deploy send-test-notification for full push test.',
+          icon: '/icon.png',
+          tag: 'anaqi-test',
+        })
+      } catch {
+        setNotiError(error.message || 'Test failed — is send-test-notification deployed?')
+        return
+      }
+      setNotiError('Server push unavailable — showed local test. Deploy: supabase functions deploy send-test-notification')
+      return
+    }
+
+    const result = data as { sent?: number; failed?: number; errors?: string[] }
+    if (!result?.sent) {
+      setNotiError(result?.errors?.[0] ?? 'No tokens sent — try Enable alerts again')
+    }
+  }, [syncToken])
+
+  return { notiStatus, notiError, iosHint, testCountdown, enableNotifications, testNotification }
 }

@@ -1,0 +1,490 @@
+import { useState, useEffect, useCallback } from 'react'
+import type { Session } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
+import {
+  formatTime,
+  formatDate,
+  todayStr,
+  formatCountdown,
+  formatElapsed,
+  toTimeInputValue,
+  todayTimeInputToTimestamp,
+} from '../lib/format'
+import type { FamilyInfo, PumpSession, PumpSessionRow, PumpSide } from '../types/database'
+import { rowToPumpSession, pumpDisplayNote } from '../types/database'
+
+const PUMP_INTERVAL_MS = 3 * 60 * 60 * 1000
+const PUMP_WARN_MS = 30 * 60 * 1000
+const QUICK_OZ = [1, 1.5, 2, 2.5, 3, 4]
+const QUICK_DURATION = [10, 15, 20, 25, 30]
+const SIDES = ['L', 'R', 'Both'] as const
+const FORGOT_AGO_MIN = [15, 30, 45, 60] as const
+
+type Status = 'none' | 'ok' | 'due' | 'overdue'
+
+function getStatus(lastTs: number | null, now: number): Status {
+  if (!lastTs) return 'none'
+  const remaining = PUMP_INTERVAL_MS - (now - lastTs)
+  if (remaining < 0) return 'overdue'
+  if (remaining <= PUMP_WARN_MS) return 'due'
+  return 'ok'
+}
+
+interface Props {
+  session: Session
+  family: FamilyInfo
+}
+
+export default function PumpTracker({ session, family }: Props) {
+  const [sessions, setSessions] = useState<PumpSession[]>([])
+  const [loading, setLoading] = useState(true)
+  const [oz, setOz] = useState('2')
+  const [side, setSide] = useState<PumpSide | ''>('Both')
+  const [durationMin, setDurationMin] = useState<number | ''>('')
+  const [note, setNote] = useState('')
+  const [now, setNow] = useState(Date.now())
+  const [justLogged, setJustLogged] = useState(false)
+  const [activeTab, setActiveTab] = useState<'today' | 'history'>('today')
+  const [forgotOpen, setForgotOpen] = useState(false)
+  const [forgotTime, setForgotTime] = useState(() => toTimeInputValue(Date.now() - 30 * 60 * 1000))
+  const [error, setError] = useState('')
+
+  const fetchSessions = useCallback(async () => {
+    const { data, error: fetchError } = await supabase
+      .from('pump_sessions')
+      .select('*')
+      .order('logged_at', { ascending: true })
+
+    if (fetchError) {
+      setError(fetchError.message)
+    } else {
+      setSessions((data as PumpSessionRow[]).map(rowToPumpSession))
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    fetchSessions()
+
+    const channel = supabase
+      .channel('pump-sessions-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pump_sessions' },
+        () => fetchSessions(),
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [fetchSessions])
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const lastSession = sessions.length > 0 ? sessions[sessions.length - 1] : null
+  const nextPumpTs = lastSession ? lastSession.timestamp + PUMP_INTERVAL_MS : null
+  const remaining = nextPumpTs ? nextPumpTs - now : null
+  const status = getStatus(lastSession?.timestamp ?? null, now)
+  const countdown = remaining !== null ? formatCountdown(remaining) : null
+
+  const todaySessions = sessions.filter(
+    s => new Date(s.timestamp).toDateString() === todayStr(),
+  )
+  const dailyOz = todaySessions.reduce((sum, s) => sum + s.oz, 0)
+
+  const pastSessions = sessions.filter(
+    s => new Date(s.timestamp).toDateString() !== todayStr(),
+  )
+  const grouped = pastSessions.reduce<Record<string, PumpSession[]>>((acc, s) => {
+    const k = new Date(s.timestamp).toDateString()
+    ;(acc[k] ??= []).push(s)
+    return acc
+  }, {})
+  const pastDates = Object.keys(grouped).sort(
+    (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+  )
+
+  const logSession = useCallback(async (loggedAtTs: number) => {
+    const parsed = parseFloat(oz)
+    if (!parsed || parsed <= 0 || parsed > 20) return
+
+    setError('')
+    const { error: insertError } = await supabase.from('pump_sessions').insert({
+      family_id: family.familyId,
+      logged_at: new Date(loggedAtTs).toISOString(),
+      oz: parsed,
+      side: side || null,
+      duration_min: durationMin || null,
+      note: note.trim() || null,
+      logged_by: session.user.id,
+    })
+
+    if (insertError) {
+      setError(insertError.message)
+      return
+    }
+
+    setNote('')
+    setForgotOpen(false)
+    setJustLogged(true)
+    setTimeout(() => setJustLogged(false), 2000)
+    fetchSessions()
+  }, [oz, side, durationMin, note, family.familyId, session.user.id, fetchSessions])
+
+  const forgotTs = todayTimeInputToTimestamp(forgotTime)
+  const forgotValid =
+    forgotTs <= Date.now() &&
+    (!lastSession || forgotTs > lastSession.timestamp)
+
+  const removeSession = useCallback(
+    async (id: string) => {
+      const { error: deleteError } = await supabase.from('pump_sessions').delete().eq('id', id)
+      if (deleteError) setError(deleteError.message)
+      else fetchSessions()
+    },
+    [fetchSessions],
+  )
+
+  if (loading) {
+    return (
+      <div className="pump-loading">
+        <div className="loading-spinner">🤱</div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {error && <p className="auth-error" style={{ marginBottom: '0.75rem' }}>{error}</p>}
+
+      <div className={`card countdown-card pump-card status-${status}`}>
+        {status === 'none' && (
+          <>
+            <p className="cd-label">No pump sessions yet</p>
+            <p className="cd-time">—</p>
+            <p className="cd-sub">Log your first session below</p>
+          </>
+        )}
+
+        {status === 'ok' && lastSession && nextPumpTs && (() => {
+          const dueTs = lastSession.timestamp + PUMP_INTERVAL_MS - PUMP_WARN_MS
+          const cd = formatCountdown(dueTs - now)
+          return (
+            <>
+              <p className="cd-label">Next pump in</p>
+              <p className="cd-time">
+                {cd.h > 0 && <><span>{cd.h}</span><small>h </small></>}
+                <span>{cd.m}</span><small> m</small>
+              </p>
+              <div className="cd-rows">
+                <div className="cd-row"><span>Last pumped</span><span>{formatTime(lastSession.timestamp)}</span></div>
+                <div className="cd-row"><span>Next pump ~</span><span>{formatTime(nextPumpTs)}</span></div>
+                <div className="cd-row"><span>Since last</span><span>{formatElapsed(now - lastSession.timestamp)}</span></div>
+              </div>
+            </>
+          )
+        })()}
+
+        {status === 'due' && countdown && nextPumpTs && (
+          <>
+            <p className="cd-label">🤱 Pump soon!</p>
+            <p className="cd-time">
+              {countdown.h > 0 && <><span>{countdown.h}</span><small>h </small></>}
+              <span>{countdown.m}</span><small>m</small>
+            </p>
+            <p className="cd-sub">
+              next pump ~{formatTime(nextPumpTs)} · {countdown.m}m away
+            </p>
+          </>
+        )}
+
+        {status === 'overdue' && countdown && lastSession && (
+          <>
+            <p className="cd-label">Time to pump!</p>
+            <p className="cd-time">
+              +{countdown.h > 0 && <><span>{countdown.h}</span><small>h </small></>}
+              <span>{countdown.m}</span><small>m</small>
+            </p>
+            <p className="cd-sub">
+              last pumped {formatTime(lastSession.timestamp)} · {formatElapsed(now - lastSession.timestamp)} ago
+            </p>
+          </>
+        )}
+      </div>
+
+      {(status === 'due' || status === 'overdue') && (
+        <div className="prepare-banner pump-banner">
+          <span className="prepare-icon">⏱️</span>
+          <span>Good time to pump — helps keep supply steady for Anaqi</span>
+        </div>
+      )}
+
+      <div className="stats-row">
+        <div className="stat-box pump-stat">
+          <span className="stat-value">{dailyOz.toFixed(1)}</span>
+          <span className="stat-unit">oz</span>
+          <p className="stat-label">Pumped today</p>
+        </div>
+        <div className="stat-box pump-stat">
+          <span className="stat-value">{todaySessions.length}</span>
+          <p className="stat-label">Sessions</p>
+        </div>
+        <div className="stat-box pump-stat">
+          <span className="stat-value">
+            {lastSession ? formatTime(lastSession.timestamp) : '—'}
+          </span>
+          <p className="stat-label">Last pump</p>
+        </div>
+        <div className="stat-box pump-stat">
+          <span className="stat-value">
+            {todaySessions.length > 0
+              ? (dailyOz / todaySessions.length).toFixed(1)
+              : '—'}
+          </span>
+          <p className="stat-label">Avg / session</p>
+        </div>
+      </div>
+
+      <div className="card log-card pump-log">
+        <h2 className="card-title">Log pump session</h2>
+
+        <p className="section-label">Amount pumped</p>
+        <div className="oz-row">
+          {QUICK_OZ.map(q => (
+            <button
+              key={q}
+              type="button"
+              className={`oz-btn pump-oz-btn ${oz === String(q) ? 'active' : ''}`}
+              onClick={() => setOz(String(q))}
+            >
+              {q}oz
+            </button>
+          ))}
+        </div>
+
+        <div className="custom-row">
+          <input
+            type="number"
+            className="oz-input"
+            value={oz}
+            onChange={e => setOz(e.target.value)}
+            min="0.5"
+            max="20"
+            step="0.5"
+            inputMode="decimal"
+            aria-label="Custom oz amount"
+          />
+          <span className="oz-unit">oz</span>
+        </div>
+
+        <p className="section-label">Side</p>
+        <div className="milk-type-row">
+          {SIDES.map(s => (
+            <button
+              key={s}
+              type="button"
+              className={`milk-btn pump-side-btn ${side === s ? 'active' : ''}`}
+              onClick={() => setSide(prev => (prev === s ? '' : s))}
+            >
+              {s === 'Both' ? 'Both' : s}
+            </button>
+          ))}
+        </div>
+
+        <p className="section-label">Duration (optional)</p>
+        <div className="oz-row">
+          {QUICK_DURATION.map(d => (
+            <button
+              key={d}
+              type="button"
+              className={`oz-btn pump-oz-btn ${durationMin === d ? 'active' : ''}`}
+              onClick={() => setDurationMin(prev => (prev === d ? '' : d))}
+            >
+              {d}m
+            </button>
+          ))}
+        </div>
+
+        <input
+          type="text"
+          className="note-input"
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          placeholder="remark (e.g. setting 5, flange size)"
+          maxLength={80}
+        />
+
+        <button
+          type="button"
+          className={`log-btn pump-log-btn ${justLogged ? 'logged' : ''}`}
+          onClick={() => logSession(Date.now())}
+        >
+          {justLogged ? '✓ Logged!' : '🤱 Log Pump Now'}
+        </button>
+
+        <button
+          type="button"
+          className="forgot-toggle"
+          onClick={() => setForgotOpen(open => !open)}
+        >
+          {forgotOpen ? 'Hide' : 'Forgot to log?'}
+        </button>
+
+        {forgotOpen && (
+          <div className="forgot-panel">
+            <p className="section-label">When did you pump?</p>
+            <div className="oz-row">
+              {FORGOT_AGO_MIN.map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  className="oz-btn pump-oz-btn forgot-ago-btn"
+                  onClick={() => setForgotTime(toTimeInputValue(Date.now() - m * 60 * 1000))}
+                >
+                  {m}m ago
+                </button>
+              ))}
+            </div>
+            <div className="custom-row">
+              <input
+                type="time"
+                className="oz-input forgot-time-input"
+                value={forgotTime}
+                onChange={e => setForgotTime(e.target.value)}
+                aria-label="Pump time"
+              />
+            </div>
+            {nextPumpTs && (
+              <p className="forgot-hint">Scheduled was ~{formatTime(nextPumpTs)}</p>
+            )}
+            {!forgotValid && (
+              <p className="forgot-error">Pick a time after last pump and not in the future</p>
+            )}
+            <div className="time-preview">
+              <span className="time-preview-label">Will log</span>
+              <span className="time-preview-val">{oz}oz at {formatTime(forgotTs)}</span>
+              <span className="time-preview-next">→ next pump ~{formatTime(forgotTs + PUMP_INTERVAL_MS)}</span>
+            </div>
+            <button
+              type="button"
+              className="log-btn log-btn-missed pump-log-btn-missed"
+              disabled={!forgotValid}
+              onClick={() => logSession(forgotTs)}
+            >
+              Log {oz}oz at {formatTime(forgotTs)}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="tabs">
+        <button
+          type="button"
+          className={`tab-btn pump-tab ${activeTab === 'today' ? 'active' : ''}`}
+          onClick={() => setActiveTab('today')}
+        >
+          Today
+          {todaySessions.length > 0 && <span className="tab-badge">{todaySessions.length}</span>}
+        </button>
+        <button
+          type="button"
+          className={`tab-btn pump-tab ${activeTab === 'history' ? 'active' : ''}`}
+          onClick={() => setActiveTab('history')}
+        >
+          History
+        </button>
+      </div>
+
+      {activeTab === 'today' && (
+        <div className="card history-card">
+          {todaySessions.length === 0 ? (
+            <p className="empty-state">No pump sessions logged today yet.</p>
+          ) : (
+            <ul className="feeding-list">
+              {[...todaySessions].reverse().map((s, i, arr) => {
+                const prev = arr[i + 1]
+                const gap = prev ? s.timestamp - prev.timestamp : null
+                const displayNote = pumpDisplayNote(s)
+                return (
+                  <li key={s.id} className="feeding-item">
+                    {gap && (
+                      <div className="feeding-gap">
+                        {formatCountdown(gap).h > 0
+                          ? `${formatCountdown(gap).h}h ${formatCountdown(gap).m}m gap`
+                          : `${formatCountdown(gap).m}m gap`}
+                      </div>
+                    )}
+                    <div className="feeding-row">
+                      <div className="feeding-left">
+                        <span className="feeding-oz">{s.oz}oz</span>
+                        {displayNote && <span className="feeding-note">{displayNote}</span>}
+                      </div>
+                      <div className="feeding-right">
+                        <span className="feeding-time">{formatTime(s.timestamp)}</span>
+                        <button
+                          type="button"
+                          className="remove-btn"
+                          onClick={() => removeSession(s.id)}
+                          aria-label="Remove"
+                        >×</button>
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'history' && (
+        <div className="card history-card">
+          {pastDates.length === 0 ? (
+            <p className="empty-state">No past pump sessions recorded.</p>
+          ) : (
+            pastDates.map(dk => {
+              const items = grouped[dk]
+              const total = items.reduce((sum, s) => sum + s.oz, 0)
+              return (
+                <div key={dk} className="history-day">
+                  <div className="history-day-header">
+                    <span className="history-day-label">{formatDate(items[0].timestamp)}</span>
+                    <span className="history-day-total">{total.toFixed(1)}oz · {items.length}x</span>
+                  </div>
+                  <ul className="feeding-list">
+                    {[...items].reverse().map(s => {
+                      const displayNote = pumpDisplayNote(s)
+                      return (
+                        <li key={s.id} className="feeding-item">
+                          <div className="feeding-row">
+                            <div className="feeding-left">
+                              <span className="feeding-oz">{s.oz}oz</span>
+                              {displayNote && <span className="feeding-note">{displayNote}</span>}
+                            </div>
+                            <div className="feeding-right">
+                              <span className="feeding-time">{formatTime(s.timestamp)}</span>
+                              <button
+                                type="button"
+                                className="remove-btn"
+                                onClick={() => removeSession(s.id)}
+                                aria-label="Remove"
+                              >×</button>
+                            </div>
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
+    </>
+  )
+}

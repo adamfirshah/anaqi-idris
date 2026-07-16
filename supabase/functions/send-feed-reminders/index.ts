@@ -10,9 +10,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const FEED_INTERVAL_MS = 2 * 60 * 60 * 1000
-const PREPARE_WARN_MS = 30 * 60 * 1000       // prep milk at 1h30m after last feed
-const EARLY_PREPARE_MIN_MS = 5 * 60 * 1000   // notify 5–10 min before prep time
-const EARLY_PREPARE_MAX_MS = 10 * 60 * 1000
+const PREPARE_WARN_MS = 60 * 60 * 1000       // prep milk 1 hour before next feed
+const PREPARE_NOTIFY_MS = 10 * 60 * 1000     // notify within first 10 min of prep window
+const FEED_NOTIFY_MS = 5 * 60 * 1000         // notify up to 5 min before next feed
 
 async function getAccessToken(clientEmail: string, privateKey: string) {
   const header = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
@@ -61,7 +61,7 @@ async function sendFcm(
   title: string,
   body: string,
 ) {
-  await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
+  const res = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -70,11 +70,18 @@ async function sendFcm(
     body: JSON.stringify({
       message: {
         token,
-        notification: { title, body },
-        webpush: { fcm_options: { link: '/' } },
+        webpush: {
+          headers: { Urgency: 'high' },
+          notification: { title, body, icon: '/icon.png' },
+          fcm_options: { link: '/' },
+        },
       },
     }),
   })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`FCM ${res.status}: ${err}`)
+  }
 }
 
 Deno.serve(async () => {
@@ -111,22 +118,21 @@ Deno.serve(async () => {
     let title = ''
     let body = ''
 
-    if (remaining <= 0 && elapsed < FEED_INTERVAL_MS + 5 * 60_000) {
+    if (remaining <= 0) {
       reminderType = 'overdue'
       title = '🍼 Feeding overdue!'
       body = 'Anaqi is past the 2-hour feeding window.'
-    } else if (remaining > 0 && remaining <= 60_000) {
+    } else if (remaining > 0 && remaining <= FEED_NOTIFY_MS) {
       reminderType = 'feed'
       title = '🍼 Time to feed Anaqi!'
       body = '2 hours since last feeding.'
     } else if (
-      msUntilPrepare > EARLY_PREPARE_MIN_MS &&
-      msUntilPrepare <= EARLY_PREPARE_MAX_MS
+      msUntilPrepare <= 0 &&
+      msUntilPrepare > -PREPARE_NOTIFY_MS
     ) {
       reminderType = 'prepare'
-      const mins = Math.round(msUntilPrepare / 60_000)
-      title = '⏱️ Prepare milk soon'
-      body = `Start preparing in ~${mins} minutes.`
+      title = '⏱️ Prepare milk now'
+      body = 'Start bancuh & panaskan susu — feed time is coming up.'
     }
 
     if (!reminderType) continue
@@ -153,7 +159,11 @@ Deno.serve(async () => {
         .eq('user_id', member.user_id)
 
       for (const row of tokens ?? []) {
-        await sendFcm(accessToken, projectId, row.token, title, body)
+        try {
+          await sendFcm(accessToken, projectId, row.token, title, body)
+        } catch (err) {
+          console.error('FCM send failed:', row.token.slice(0, 12), err)
+        }
       }
     }
 

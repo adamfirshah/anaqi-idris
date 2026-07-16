@@ -38,3 +38,45 @@ export function rowToFeeding(row: FeedingRow): Feeding {
 export function feedingDisplayNote(f: Feeding): string {
   return [f.milkType, f.note.trim()].filter(Boolean).join(' · ')
 }
+
+export type PumpSide = 'L' | 'R' | 'Both'
+
+export interface PumpSessionRow {
+  id: string
+  family_id: string
+  logged_at: string
+  oz: number
+  side: PumpSide | null
+  duration_min: number | null
+  note: string | null
+  logged_by: string | null
+  created_at: string
+}
+
+export interface PumpSession {
+  id: string
+  timestamp: number
+  oz: number
+  side: PumpSide | null
+  durationMin: number | null
+  note: string
+}
+
+export function rowToPumpSession(row: PumpSessionRow): PumpSession {
+  return {
+    id: row.id,
+    timestamp: new Date(row.logged_at).getTime(),
+    oz: Number(row.oz),
+    side: row.side,
+    durationMin: row.duration_min,
+    note: row.note ?? '',
+  }
+}
+
+export function pumpDisplayNote(s: PumpSession): string {
+  const parts: string[] = []
+  if (s.side) parts.push(s.side === 'Both' ? 'Both sides' : `${s.side} side`)
+  if (s.durationMin) parts.push(`${s.durationMin} min`)
+  if (s.note.trim()) parts.push(s.note.trim())
+  return parts.join(' · ')
+}

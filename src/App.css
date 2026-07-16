@@ -302,6 +302,64 @@
 }
 .log-btn:active { background: #4f46e5; transform: scale(0.98); }
 .log-btn.logged { background: #22c55e; }
+.log-btn-missed { background: #f59e0b; }
+.log-btn-missed:active { background: #d97706; }
+.log-btn-missed.logged { background: #22c55e; }
+
+.forgot-toggle {
+  width: 100%;
+  margin-top: 0.625rem;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.5rem;
+  -webkit-tap-highlight-color: transparent;
+}
+.app-mummy .forgot-toggle { color: #db2777; }
+
+.forgot-panel {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed #e2e8f0;
+}
+.forgot-hint {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin: 0.5rem 0 0;
+  text-align: center;
+}
+.forgot-error {
+  font-size: 0.75rem;
+  color: #ef4444;
+  margin: 0.5rem 0 0;
+  text-align: center;
+}
+.forgot-time-input { flex: 1; text-align: center; }
+.forgot-ago-btn { font-size: 0.78rem !important; }
+.forgot-panel .log-btn { margin-top: 0.75rem; }
+.forgot-panel .log-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.ios-noti-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  background: #eef2ff;
+  border: 1.5px solid #c7d2fe;
+  border-radius: 0.875rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.82rem;
+  color: #4338ca;
+  margin-bottom: 0.875rem;
+  line-height: 1.4;
+}
+.app-mummy .ios-noti-hint {
+  background: #fdf2f8;
+  border-color: #f9a8d4;
+  color: #9d174d;
+}
 
 /* ─── Tabs ────────────────────────────────────────────────────── */
 .tabs {
@@ -436,4 +494,76 @@
 .history-day-total {
   font-size: 0.76rem;
   color: var(--text-muted);
+}
+
+/* ─── Person tabs (Anaqi / Mummy) ────────────────────────────── */
+.person-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.person-tab {
+  flex: 1;
+  padding: 0.65rem;
+  border-radius: 0.875rem;
+  border: none;
+  background: #e2e8f0;
+  color: #64748b;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  -webkit-tap-highlight-color: transparent;
+}
+.person-tab.active {
+  background: #6366f1;
+  color: #fff;
+}
+.app-mummy .person-tab.active {
+  background: #ec4899;
+}
+
+/* ─── Mummy / Pump theme ─────────────────────────────────────── */
+.app-mummy .pump-card.status-none    { background: linear-gradient(135deg, #94a3b8, #64748b); }
+.app-mummy .pump-card.status-ok      { background: linear-gradient(135deg, #ec4899, #be185d); }
+.app-mummy .pump-card.status-due     { background: linear-gradient(135deg, #f59e0b, #d97706); }
+.app-mummy .pump-card.status-overdue { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+
+.app-mummy .pump-stat .stat-value,
+.app-mummy .pump-stat .stat-unit { color: #ec4899; }
+
+.app-mummy .pump-oz-btn.active,
+.app-mummy .pump-side-btn.active { background: #ec4899; border-color: #ec4899; }
+
+.app-mummy .pump-log-btn { background: #ec4899; }
+.app-mummy .pump-log-btn:active { background: #db2777; }
+
+.app-mummy .pump-log-btn-missed {
+  margin-top: 0.625rem;
+  background: #f59e0b;
+}
+.app-mummy .pump-log-btn-missed:active { background: #d97706; }
+
+.app-mummy .pump-tab.active { background: #ec4899; }
+
+.app-mummy .pump-banner {
+  background: #fce7f3;
+  border-color: #f9a8d4;
+  color: #9d174d;
+}
+
+.app-mummy .invite-pill {
+  color: #ec4899;
+  background: #fdf2f8;
+}
+
+.app-mummy .noti-btn {
+  background: #fdf2f8;
+  color: #ec4899;
+}
+
+.pump-loading {
+  display: flex;
+  justify-content: center;
+  padding: 3rem 0;
 }

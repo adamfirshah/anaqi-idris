@@ -29,3 +29,15 @@ export function formatElapsed(ms: number) {
   if (h > 0) return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`
   return `${m}m ago`
 }
+
+export function toTimeInputValue(ts: number): string {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+export function todayTimeInputToTimestamp(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  const d = new Date()
+  d.setHours(h, m, 0, 0)
+  return d.getTime()
+}

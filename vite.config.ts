@@ -30,6 +30,8 @@ export default defineConfig(({ mode }) => ({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Firebase messaging uses its own SW — don't register Workbox SW (they conflict on iOS)
+      injectRegister: false,
       includeAssets: ['favicon.svg', 'icon.png', 'firebase-messaging-sw.js', 'firebase-sw-config.js'],
       manifest: {
         name: "Anaqi Idris's Milk Tracker",
