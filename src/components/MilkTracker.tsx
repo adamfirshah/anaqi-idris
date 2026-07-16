@@ -65,7 +65,7 @@ export default function MilkTracker({
     toTimeInputValue(Date.now() - 30 * 60 * 1000),
   );
   const [error, setError] = useState("");
-  const { notiStatus, notiError, iosHint, testCountdown, enableNotifications, testNotification } = usePushNotifications(
+  const { notiStatus, notiError, iosHint, enableNotifications } = usePushNotifications(
     session.user.id,
   );
 
@@ -212,17 +212,7 @@ export default function MilkTracker({
         <div className="header-actions">
           <span className="invite-pill">Code: {family.inviteCode}</span>
           {notiStatus === "on" ? (
-            <>
-              <span className="noti-on-pill">🔔 On</span>
-              <button
-                type="button"
-                className="noti-test-btn"
-                onClick={testNotification}
-                disabled={testCountdown !== null}
-              >
-                {testCountdown !== null ? `Test in ${testCountdown}s…` : '🔔 Test alert'}
-              </button>
-            </>
+            <span className="noti-on-pill">🔔 On</span>
           ) : (
             <button
               type="button"

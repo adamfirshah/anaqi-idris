@@ -32,10 +32,10 @@ export default defineConfig(({ mode }) => ({
       registerType: 'autoUpdate',
       // Firebase messaging uses its own SW — don't register Workbox SW (they conflict on iOS)
       injectRegister: false,
-      includeAssets: ['favicon.svg', 'icon.png', 'firebase-messaging-sw.js', 'firebase-sw-config.js'],
+      includeAssets: ['favicon.svg', 'icon.png', 'mummy.png', 'firebase-messaging-sw.js', 'firebase-sw-config.js'],
       manifest: {
         name: "Anaqi Idris's Milk Tracker",
-        short_name: 'Milk Tracker',
+        short_name: 'Anaqi Idris',
         description: 'Track baby milk feedings for Anaqi Idris',
         theme_color: '#6366f1',
         background_color: '#f1f5f9',

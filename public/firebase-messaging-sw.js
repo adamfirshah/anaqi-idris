@@ -8,13 +8,15 @@ firebase.initializeApp(self.FIREBASE_CONFIG)
 const messaging = firebase.messaging()
 
 messaging.onBackgroundMessage(payload => {
-  const title = payload.notification?.title ?? "Anaqi's Milk"
-  const body = payload.notification?.body ?? 'Time to check on feeding'
+  const noti = payload.notification ?? payload.webpush?.notification ?? {}
+  const title = noti.title ?? "Anaqi's Milk"
+  const body = noti.body ?? 'Time to check on feeding'
+  const icon = noti.icon ?? payload.data?.icon ?? '/icon.png'
   self.registration.showNotification(title, {
     body,
-    icon: '/icon.png',
-    badge: '/icon.png',
-    tag: 'anaqi-feed-reminder',
+    icon,
+    badge: icon,
+    tag: 'anaqi-reminder',
     data: payload.data,
   })
 })

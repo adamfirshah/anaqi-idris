@@ -25,7 +25,6 @@ export function usePushNotifications(userId: string | undefined) {
   )
   const [notiError, setNotiError] = useState('')
   const [iosHint, setIosHint] = useState('')
-  const [testCountdown, setTestCountdown] = useState<number | null>(null)
   const listenerReady = useRef(false)
 
   useEffect(() => {
@@ -132,45 +131,5 @@ export function usePushNotifications(userId: string | undefined) {
     await syncToken(true)
   }, [syncToken])
 
-  const testNotification = useCallback(async () => {
-    setNotiError('')
-
-    if (Notification.permission !== 'granted') {
-      setNotiError('Enable alerts first, then test')
-      return
-    }
-
-    await syncToken(false)
-
-    for (let i = 5; i >= 1; i--) {
-      setTestCountdown(i)
-      await new Promise(r => setTimeout(r, 1000))
-    }
-    setTestCountdown(null)
-
-    const { data, error } = await supabase.functions.invoke('send-test-notification')
-
-    if (error) {
-      try {
-        const reg = await navigator.serviceWorker.ready
-        await reg.showNotification('🍼 Test notification', {
-          body: 'Local test only — deploy send-test-notification for full push test.',
-          icon: '/icon.png',
-          tag: 'anaqi-test',
-        })
-      } catch {
-        setNotiError(error.message || 'Test failed — is send-test-notification deployed?')
-        return
-      }
-      setNotiError('Server push unavailable — showed local test. Deploy: supabase functions deploy send-test-notification')
-      return
-    }
-
-    const result = data as { sent?: number; failed?: number; errors?: string[] }
-    if (!result?.sent) {
-      setNotiError(result?.errors?.[0] ?? 'No tokens sent — try Enable alerts again')
-    }
-  }, [syncToken])
-
-  return { notiStatus, notiError, iosHint, testCountdown, enableNotifications, testNotification }
+  return { notiStatus, notiError, iosHint, enableNotifications }
 }

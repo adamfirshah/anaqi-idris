@@ -2,17 +2,71 @@
 // Deploy: supabase functions deploy send-feed-reminders
 // Schedule: Supabase Dashboard → Edge Functions → Cron → every 1 minute
 //
-// Secrets needed (supabase secrets set):
-//   FIREBASE_PROJECT_ID
-//   FIREBASE_CLIENT_EMAIL
-//   FIREBASE_PRIVATE_KEY  (from Firebase service account JSON, keep \n as literal)
+// Feed reminders (last fed 8:00am → prep 9:00am → feed 10:00am):
+//   8:45  prepare_15   icon: /icon.png
+//   8:50  prepare_10   icon: /icon.png
+//  10:00  overdue      icon: /icon.png
+//  10:15  forgot_log   icon: /icon.png
+//
+// Pump reminders (since last pump):
+//   2h / 3h / 4h  pump_2h / pump_3h / pump_4h  icon: /mummy.png
+//
+// Secrets: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const FEED_INTERVAL_MS = 2 * 60 * 60 * 1000
-const PREPARE_WARN_MS = 60 * 60 * 1000       // prep milk 1 hour before next feed
-const PREPARE_NOTIFY_MS = 10 * 60 * 1000     // notify within first 10 min of prep window
-const FEED_NOTIFY_MS = 5 * 60 * 1000         // notify up to 5 min before next feed
+const PREPARE_WARN_MS = 60 * 60 * 1000
+const FORGOT_LOG_AFTER_MS = 15 * 60 * 1000
+const CRON_WINDOW_MS = 60 * 1000
+const FEED_ICON = '/icon.png'
+const PUMP_ICON = '/mummy.png'
+
+type FeedReminderType = 'prepare_15' | 'prepare_10' | 'overdue' | 'forgot_log'
+type PumpReminderType = 'pump_2h' | 'pump_3h' | 'pump_4h'
+
+const FEED_REMINDERS: Record<FeedReminderType, { title: string; body: string }> = {
+  prepare_15: {
+    title: '⏱️ Prep susu in 15 min',
+    body: 'Babah & Mummy standby Anaqi lapor.',
+  },
+  prepare_10: {
+    title: '⏱️ Prep susu in 10 min',
+    body: 'Lagi 10 nak sejam, bancuh awal tak kalut.',
+  },
+  overdue: {
+    title: '🍼 Babah & Mummy, time to feed Anaqi!',
+    body: '2 hours since last feed — susu time now.',
+  },
+  forgot_log: {
+    title: '🍼 Ha lupa la tuuu..',
+    body: 'Feed time was 15 min ago — log now if Anaqi already fed.',
+  },
+}
+
+const PUMP_REMINDER: { title: string; body: string } = {
+  title: 'Mummy, tak pump lagi kan?',
+  body: 'Pump la nanti bengkak sakit pula...',
+}
+
+function inWindow(value: number, targetMs: number) {
+  return value <= targetMs && value > targetMs - CRON_WINDOW_MS
+}
+
+function pickFeedReminder(remaining: number, msUntilPrepare: number): FeedReminderType | null {
+  if (inWindow(msUntilPrepare, 15 * 60_000)) return 'prepare_15'
+  if (inWindow(msUntilPrepare, 10 * 60_000)) return 'prepare_10'
+  if (inWindow(-remaining, 0)) return 'overdue'
+  if (inWindow(-remaining, FORGOT_LOG_AFTER_MS)) return 'forgot_log'
+  return null
+}
+
+function pickPumpReminder(elapsed: number): PumpReminderType | null {
+  if (inWindow(elapsed, 2 * 60 * 60_000)) return 'pump_2h'
+  if (inWindow(elapsed, 3 * 60 * 60_000)) return 'pump_3h'
+  if (inWindow(elapsed, 4 * 60 * 60_000)) return 'pump_4h'
+  return null
+}
 
 async function getAccessToken(clientEmail: string, privateKey: string) {
   const header = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
@@ -60,6 +114,7 @@ async function sendFcm(
   token: string,
   title: string,
   body: string,
+  icon: string,
 ) {
   const res = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
     method: 'POST',
@@ -70,9 +125,10 @@ async function sendFcm(
     body: JSON.stringify({
       message: {
         token,
+        data: { icon },
         webpush: {
           headers: { Urgency: 'high' },
-          notification: { title, body, icon: '/icon.png' },
+          notification: { title, body, icon },
           fcm_options: { link: '/' },
         },
       },
@@ -81,6 +137,36 @@ async function sendFcm(
   if (!res.ok) {
     const err = await res.text()
     throw new Error(`FCM ${res.status}: ${err}`)
+  }
+}
+
+async function notifyFamily(
+  supabase: ReturnType<typeof createClient>,
+  accessToken: string,
+  projectId: string,
+  familyId: string,
+  title: string,
+  body: string,
+  icon: string,
+) {
+  const { data: members } = await supabase
+    .from('family_members')
+    .select('user_id')
+    .eq('family_id', familyId)
+
+  for (const member of members ?? []) {
+    const { data: tokens } = await supabase
+      .from('fcm_tokens')
+      .select('token')
+      .eq('user_id', member.user_id)
+
+    for (const row of tokens ?? []) {
+      try {
+        await sendFcm(accessToken, projectId, row.token, title, body, icon)
+      } catch (err) {
+        console.error('FCM send failed:', row.token.slice(0, 12), err)
+      }
+    }
   }
 }
 
@@ -99,6 +185,7 @@ Deno.serve(async () => {
   const now = Date.now()
 
   for (const family of families ?? []) {
+    // ── Feed reminders ──
     const { data: lastFeed } = await supabase
       .from('feedings')
       .select('id, logged_at')
@@ -107,71 +194,67 @@ Deno.serve(async () => {
       .limit(1)
       .maybeSingle()
 
-    if (!lastFeed) continue
+    if (lastFeed) {
+      const lastTs = new Date(lastFeed.logged_at).getTime()
+      const elapsed = now - lastTs
+      const remaining = FEED_INTERVAL_MS - elapsed
+      const msUntilPrepare = remaining - PREPARE_WARN_MS
+      const feedReminderType = pickFeedReminder(remaining, msUntilPrepare)
 
-    const lastTs = new Date(lastFeed.logged_at).getTime()
-    const elapsed = now - lastTs
-    const remaining = FEED_INTERVAL_MS - elapsed
-    const msUntilPrepare = remaining - PREPARE_WARN_MS
+      if (feedReminderType) {
+        const { data: alreadySent } = await supabase
+          .from('feed_reminder_log')
+          .select('id')
+          .eq('family_id', family.id)
+          .eq('reminder_type', feedReminderType)
+          .eq('feeding_id', lastFeed.id)
+          .maybeSingle()
 
-    let reminderType: 'prepare' | 'feed' | 'overdue' | null = null
-    let title = ''
-    let body = ''
-
-    if (remaining <= 0) {
-      reminderType = 'overdue'
-      title = '🍼 Feeding overdue!'
-      body = 'Anaqi is past the 2-hour feeding window.'
-    } else if (remaining > 0 && remaining <= FEED_NOTIFY_MS) {
-      reminderType = 'feed'
-      title = '🍼 Time to feed Anaqi!'
-      body = '2 hours since last feeding.'
-    } else if (
-      msUntilPrepare <= 0 &&
-      msUntilPrepare > -PREPARE_NOTIFY_MS
-    ) {
-      reminderType = 'prepare'
-      title = '⏱️ Prepare milk now'
-      body = 'Start bancuh & panaskan susu — feed time is coming up.'
-    }
-
-    if (!reminderType) continue
-
-    const { data: alreadySent } = await supabase
-      .from('feed_reminder_log')
-      .select('id')
-      .eq('family_id', family.id)
-      .eq('reminder_type', reminderType)
-      .eq('feeding_id', lastFeed.id)
-      .maybeSingle()
-
-    if (alreadySent) continue
-
-    const { data: members } = await supabase
-      .from('family_members')
-      .select('user_id')
-      .eq('family_id', family.id)
-
-    for (const member of members ?? []) {
-      const { data: tokens } = await supabase
-        .from('fcm_tokens')
-        .select('token')
-        .eq('user_id', member.user_id)
-
-      for (const row of tokens ?? []) {
-        try {
-          await sendFcm(accessToken, projectId, row.token, title, body)
-        } catch (err) {
-          console.error('FCM send failed:', row.token.slice(0, 12), err)
+        if (!alreadySent) {
+          const { title, body } = FEED_REMINDERS[feedReminderType]
+          await notifyFamily(supabase, accessToken, projectId, family.id, title, body, FEED_ICON)
+          await supabase.from('feed_reminder_log').insert({
+            family_id: family.id,
+            reminder_type: feedReminderType,
+            feeding_id: lastFeed.id,
+          })
         }
       }
     }
 
-    await supabase.from('feed_reminder_log').insert({
-      family_id: family.id,
-      reminder_type: reminderType,
-      feeding_id: lastFeed.id,
-    })
+    // ── Pump reminders ──
+    const { data: lastPump } = await supabase
+      .from('pump_sessions')
+      .select('id, logged_at')
+      .eq('family_id', family.id)
+      .order('logged_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (lastPump) {
+      const pumpElapsed = now - new Date(lastPump.logged_at).getTime()
+      const pumpReminderType = pickPumpReminder(pumpElapsed)
+
+      if (pumpReminderType) {
+        const { data: alreadySent } = await supabase
+          .from('pump_reminder_log')
+          .select('id')
+          .eq('family_id', family.id)
+          .eq('reminder_type', pumpReminderType)
+          .eq('pump_session_id', lastPump.id)
+          .maybeSingle()
+
+        if (!alreadySent) {
+          const { title, body } = PUMP_REMINDER
+          await notifyFamily(supabase, accessToken, projectId, family.id, title, body, PUMP_ICON)
+          await supabase.from('pump_reminder_log').insert({
+            family_id: family.id,
+            reminder_type: pumpReminderType,
+            pump_session_id: lastPump.id,
+          })
+        }
+      }
+    }
   }
 
   return new Response(JSON.stringify({ ok: true }), {

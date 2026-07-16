@@ -20,7 +20,7 @@ create policy "users manage own fcm tokens"
 create table public.feed_reminder_log (
   id uuid primary key default gen_random_uuid(),
   family_id uuid not null references public.families(id) on delete cascade,
-  reminder_type text not null check (reminder_type in ('prepare', 'feed', 'overdue')),
+  reminder_type text not null check (reminder_type in ('prepare_15', 'prepare_10', 'overdue', 'forgot_log')),
   sent_at timestamptz not null default now(),
   feeding_id uuid references public.feedings(id) on delete set null
 );
