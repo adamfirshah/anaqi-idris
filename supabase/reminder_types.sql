@@ -5,4 +5,4 @@ alter table public.feed_reminder_log
 
 alter table public.feed_reminder_log
   add constraint feed_reminder_log_reminder_type_check
-  check (reminder_type in ('prepare_15', 'prepare_10', 'overdue', 'forgot_log'));
+  check (reminder_type in ('prepare_15', 'prepare_10', 'prepare_30', 'overdue', 'forgot_log'));

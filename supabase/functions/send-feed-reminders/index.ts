@@ -5,6 +5,7 @@
 // Feed reminders (last fed 8:00am → prep 9:00am → feed 10:00am):
 //   8:45  prepare_15   icon: /icon.png
 //   8:50  prepare_10   icon: /icon.png
+//   9:30  prepare_30   icon: /icon.png  (30 min into prep / 30 min before feed)
 //  10:00  overdue      icon: /icon.png
 //  10:15  forgot_log   icon: /icon.png
 //
@@ -22,17 +23,21 @@ const CRON_WINDOW_MS = 60 * 1000
 const FEED_ICON = '/icon.png'
 const PUMP_ICON = '/mummy.png'
 
-type FeedReminderType = 'prepare_15' | 'prepare_10' | 'overdue' | 'forgot_log'
+type FeedReminderType = 'prepare_15' | 'prepare_10' | 'prepare_30' | 'overdue' | 'forgot_log'
 type PumpReminderType = 'pump_2h' | 'pump_3h' | 'pump_4h'
 
 const FEED_REMINDERS: Record<FeedReminderType, { title: string; body: string }> = {
   prepare_15: {
     title: '⏱️ Prep susu in 15 min',
-    body: 'Babah & Mummy standby Anaqi lapor.',
+    body: 'Babah & Mummy - standby Anaqi lapor.',
   },
   prepare_10: {
     title: '⏱️ Prep susu in 10 min',
-    body: 'Lagi 10 nak sejam, bancuh awal tak kalut.',
+    body: 'Lagi 10 nak sejam - bancuh awal tak kalut.',
+  },
+  prepare_30: {
+    title: '⏱️ Lagi 30 min nak feed',
+    body: 'Dah setengah jam prep time — susu dah ready?',
   },
   overdue: {
     title: '🍼 Babah & Mummy, time to feed Anaqi!',
@@ -56,6 +61,8 @@ function inWindow(value: number, targetMs: number) {
 function pickFeedReminder(remaining: number, msUntilPrepare: number): FeedReminderType | null {
   if (inWindow(msUntilPrepare, 15 * 60_000)) return 'prepare_15'
   if (inWindow(msUntilPrepare, 10 * 60_000)) return 'prepare_10'
+  // 30 min into 1hr prep window = 30 min before feed (e.g. 9:30 if feed at 10:00)
+  if (inWindow(remaining, 30 * 60_000)) return 'prepare_30'
   if (inWindow(-remaining, 0)) return 'overdue'
   if (inWindow(-remaining, FORGOT_LOG_AFTER_MS)) return 'forgot_log'
   return null
