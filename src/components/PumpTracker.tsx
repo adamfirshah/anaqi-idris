@@ -256,7 +256,7 @@ export default function PumpTracker({ session, family }: Props) {
         </div>
         <div className="stat-box pump-stat">
           <span className="stat-value">
-          {formatTime(nextPumpTs)}
+            {nextPumpTs ? formatTime(nextPumpTs) : '—'}
           </span>
           <p className="stat-label">Next pump</p>
         </div>
