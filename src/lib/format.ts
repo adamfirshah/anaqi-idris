@@ -10,6 +10,12 @@ export function formatDate(ts: number) {
   })
 }
 
+export function formatDatePill(dateKey: string) {
+  const d = new Date(dateKey)
+  if (dateKey === todayStr()) return 'Today'
+  return d.toLocaleDateString('en-MY', { weekday: 'short', day: 'numeric' })
+}
+
 export function todayStr() {
   return new Date().toDateString()
 }

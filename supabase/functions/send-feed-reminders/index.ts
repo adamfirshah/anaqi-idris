@@ -1,27 +1,27 @@
 // Supabase Edge Function: send-feed-reminders
-// Deploy: supabase functions deploy send-feed-reminders
-// Schedule: Supabase Dashboard → Edge Functions → Cron → every 1 minute
+// Deploy: npx supabase functions deploy send-feed-reminders
+// Cron: supabase/config.toml schedule = "* * * * *"  (or supabase/setup_cron.sql)
 //
-// Feed reminders (last fed 8:00am → prep 9:00am → feed 10:00am):
-//   8:45  prepare_15   icon: /icon.png
-//   8:50  prepare_10   icon: /icon.png
-//   9:30  prepare_30   icon: /icon.png  (30 min into prep / 30 min before feed)
-//  10:00  overdue      icon: /icon.png
-//  10:15  forgot_log   icon: /icon.png
+// Required SQL (run once in SQL Editor):
+//   supabase/reminder_types.sql
+//   supabase/pump_reminder_log.sql
 //
-// Pump reminders (since last pump):
-//   2h / 3h / 4h  pump_2h / pump_3h / pump_4h  icon: /mummy.png
-//
-// Secrets: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+// Optional secret for notification icons on iOS:
+//   supabase secrets set APP_URL=https://your-app.vercel.app
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const FEED_INTERVAL_MS = 2 * 60 * 60 * 1000
 const PREPARE_WARN_MS = 60 * 60 * 1000
 const FORGOT_LOG_AFTER_MS = 15 * 60 * 1000
-const CRON_WINDOW_MS = 60 * 1000
-const FEED_ICON = '/icon.png'
-const PUMP_ICON = '/mummy.png'
+const CRON_WINDOW_MS = 5 * 60 * 1000   // 5-min window so cron doesn't miss the 1-min slot
+const FEED_ICON = iconUrl('/icon.png')
+const PUMP_ICON = iconUrl('/mummy.png')
+
+function iconUrl(path: string) {
+  const base = Deno.env.get('APP_URL')?.replace(/\/$/, '')
+  return base ? `${base}${path}` : path
+}
 
 type FeedReminderType = 'prepare_15' | 'prepare_10' | 'prepare_30' | 'overdue' | 'forgot_log'
 type PumpReminderType = 'pump_2h' | 'pump_3h' | 'pump_4h'
@@ -33,7 +33,7 @@ const FEED_REMINDERS: Record<FeedReminderType, { title: string; body: string }> 
   },
   prepare_10: {
     title: '⏱️ Prep susu in 10 min',
-    body: 'Lagi 10 nak sejam - bancuh awal tak kalut.',
+    body: 'Lagi 10 min nak sejam - bancuh awal tak kalut.',
   },
   prepare_30: {
     title: '⏱️ Lagi 30 min nak feed',
@@ -49,7 +49,7 @@ const FEED_REMINDERS: Record<FeedReminderType, { title: string; body: string }> 
   },
 }
 
-const PUMP_REMINDER: { title: string; body: string } = {
+const PUMP_REMINDER = {
   title: 'Mummy, tak pump lagi kan?',
   body: 'Pump la nanti bengkak sakit pula...',
 }
@@ -61,7 +61,6 @@ function inWindow(value: number, targetMs: number) {
 function pickFeedReminder(remaining: number, msUntilPrepare: number): FeedReminderType | null {
   if (inWindow(msUntilPrepare, 15 * 60_000)) return 'prepare_15'
   if (inWindow(msUntilPrepare, 10 * 60_000)) return 'prepare_10'
-  // 30 min into 1hr prep window = 30 min before feed (e.g. 9:30 if feed at 10:00)
   if (inWindow(remaining, 30 * 60_000)) return 'prepare_30'
   if (inWindow(-remaining, 0)) return 'overdue'
   if (inWindow(-remaining, FORGOT_LOG_AFTER_MS)) return 'forgot_log'
@@ -75,16 +74,24 @@ function pickPumpReminder(elapsed: number): PumpReminderType | null {
   return null
 }
 
+function base64url(input: string | Uint8Array): string {
+  const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : input
+  let binary = ''
+  for (const b of bytes) binary += String.fromCharCode(b)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
 async function getAccessToken(clientEmail: string, privateKey: string) {
-  const header = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
+  const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }))
   const now = Math.floor(Date.now() / 1000)
-  const claim = btoa(JSON.stringify({
+  const claim = base64url(JSON.stringify({
     iss: clientEmail,
     scope: 'https://www.googleapis.com/auth/firebase.messaging',
     aud: 'https://oauth2.googleapis.com/token',
     iat: now,
     exp: now + 3600,
   }))
+  const unsigned = `${header}.${claim}`
   const key = await crypto.subtle.importKey(
     'pkcs8',
     pemToArrayBuffer(privateKey),
@@ -95,24 +102,43 @@ async function getAccessToken(clientEmail: string, privateKey: string) {
   const sig = await crypto.subtle.sign(
     'RSASSA-PKCS1-v1_5',
     key,
-    new TextEncoder().encode(`${header}.${claim}`),
+    new TextEncoder().encode(unsigned),
   )
-  const jwt = `${header}.${claim}.${btoa(String.fromCharCode(...new Uint8Array(sig)))}`
+  const jwt = `${unsigned}.${base64url(new Uint8Array(sig))}`
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
   })
   const json = await res.json()
+  if (!json.access_token) throw new Error(`Firebase auth failed: ${JSON.stringify(json)}`)
   return json.access_token as string
 }
 
+function normalizePrivateKey(pem: string) {
+  let key = pem.trim()
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1)
+  }
+  return key.replace(/\\n/g, '\n')
+}
+
 function pemToArrayBuffer(pem: string) {
-  const b64 = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, '')
-  const raw = atob(b64)
-  const buf = new Uint8Array(raw.length)
-  for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i)
-  return buf.buffer
+  const normalized = normalizePrivateKey(pem)
+  const b64 = normalized
+    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+    .replace(/-----END PRIVATE KEY-----/g, '')
+    .replace(/\s/g, '')
+  try {
+    const raw = atob(b64)
+    const buf = new Uint8Array(raw.length)
+    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i)
+    return buf.buffer
+  } catch {
+    throw new Error(
+      'Invalid FIREBASE_PRIVATE_KEY — re-paste from Firebase JSON (no quotes, include BEGIN/END lines)',
+    )
+  }
 }
 
 async function sendFcm(
@@ -122,6 +148,7 @@ async function sendFcm(
   title: string,
   body: string,
   icon: string,
+  tag: string,
 ) {
   const res = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
     method: 'POST',
@@ -132,10 +159,9 @@ async function sendFcm(
     body: JSON.stringify({
       message: {
         token,
-        data: { icon },
+        data: { title, body, icon, tag },
         webpush: {
           headers: { Urgency: 'high' },
-          notification: { title, body, icon },
           fcm_options: { link: '/' },
         },
       },
@@ -155,26 +181,40 @@ async function notifyFamily(
   title: string,
   body: string,
   icon: string,
+  tag: string,
 ) {
+  let sent = 0
+  const errors: string[] = []
+  const seenTokens = new Set<string>()
+
   const { data: members } = await supabase
     .from('family_members')
     .select('user_id')
     .eq('family_id', familyId)
 
   for (const member of members ?? []) {
+    // One token per user (latest device only) — avoids duplicate pop-ups
     const { data: tokens } = await supabase
       .from('fcm_tokens')
       .select('token')
       .eq('user_id', member.user_id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
 
     for (const row of tokens ?? []) {
+      if (seenTokens.has(row.token)) continue
+      seenTokens.add(row.token)
       try {
-        await sendFcm(accessToken, projectId, row.token, title, body, icon)
+        await sendFcm(accessToken, projectId, row.token, title, body, icon, tag)
+        sent++
       } catch (err) {
+        errors.push(String(err))
         console.error('FCM send failed:', row.token.slice(0, 12), err)
       }
     }
   }
+
+  return { sent, errors }
 }
 
 Deno.serve(async () => {
@@ -183,16 +223,23 @@ Deno.serve(async () => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
 
-  const projectId = Deno.env.get('FIREBASE_PROJECT_ID')!
-  const clientEmail = Deno.env.get('FIREBASE_CLIENT_EMAIL')!
-  const privateKey = Deno.env.get('FIREBASE_PRIVATE_KEY')!.replace(/\\n/g, '\n')
-  const accessToken = await getAccessToken(clientEmail, privateKey)
+  const projectId = Deno.env.get('FIREBASE_PROJECT_ID')
+  const clientEmail = Deno.env.get('FIREBASE_CLIENT_EMAIL')
+  const privateKeyRaw = Deno.env.get('FIREBASE_PRIVATE_KEY')
 
+  if (!projectId || !clientEmail || !privateKeyRaw) {
+    return new Response(JSON.stringify({
+      ok: false,
+      error: 'Missing Firebase secrets — run: supabase secrets set FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY',
+    }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  const accessToken = await getAccessToken(clientEmail, privateKeyRaw)
   const { data: families } = await supabase.from('families').select('id')
   const now = Date.now()
+  const results: Record<string, unknown>[] = []
 
   for (const family of families ?? []) {
-    // ── Feed reminders ──
     const { data: lastFeed } = await supabase
       .from('feedings')
       .select('id, logged_at')
@@ -203,8 +250,7 @@ Deno.serve(async () => {
 
     if (lastFeed) {
       const lastTs = new Date(lastFeed.logged_at).getTime()
-      const elapsed = now - lastTs
-      const remaining = FEED_INTERVAL_MS - elapsed
+      const remaining = FEED_INTERVAL_MS - (now - lastTs)
       const msUntilPrepare = remaining - PREPARE_WARN_MS
       const feedReminderType = pickFeedReminder(remaining, msUntilPrepare)
 
@@ -219,17 +265,24 @@ Deno.serve(async () => {
 
         if (!alreadySent) {
           const { title, body } = FEED_REMINDERS[feedReminderType]
-          await notifyFamily(supabase, accessToken, projectId, family.id, title, body, FEED_ICON)
-          await supabase.from('feed_reminder_log').insert({
+          const { sent, errors } = await notifyFamily(
+            supabase, accessToken, projectId, family.id, title, body, FEED_ICON, feedReminderType,
+          )
+          const { error: logError } = await supabase.from('feed_reminder_log').insert({
             family_id: family.id,
             reminder_type: feedReminderType,
             feeding_id: lastFeed.id,
+          })
+          results.push({
+            type: feedReminderType,
+            sent,
+            logError: logError?.message ?? null,
+            fcmErrors: errors.slice(0, 2),
           })
         }
       }
     }
 
-    // ── Pump reminders ──
     const { data: lastPump } = await supabase
       .from('pump_sessions')
       .select('id, logged_at')
@@ -252,19 +305,27 @@ Deno.serve(async () => {
           .maybeSingle()
 
         if (!alreadySent) {
-          const { title, body } = PUMP_REMINDER
-          await notifyFamily(supabase, accessToken, projectId, family.id, title, body, PUMP_ICON)
-          await supabase.from('pump_reminder_log').insert({
+          const { sent, errors } = await notifyFamily(
+            supabase, accessToken, projectId, family.id,
+            PUMP_REMINDER.title, PUMP_REMINDER.body, PUMP_ICON, pumpReminderType,
+          )
+          const { error: logError } = await supabase.from('pump_reminder_log').insert({
             family_id: family.id,
             reminder_type: pumpReminderType,
             pump_session_id: lastPump.id,
+          })
+          results.push({
+            type: pumpReminderType,
+            sent,
+            logError: logError?.message ?? null,
+            fcmErrors: errors.slice(0, 2),
           })
         }
       }
     }
   }
 
-  return new Response(JSON.stringify({ ok: true }), {
+  return new Response(JSON.stringify({ ok: true, at: new Date().toISOString(), results }), {
     headers: { 'Content-Type': 'application/json' },
   })
 })

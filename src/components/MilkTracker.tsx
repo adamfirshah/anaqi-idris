@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 import {
   formatTime,
   formatDate,
+  formatDatePill,
   todayStr,
   formatCountdown,
   formatElapsed,
@@ -18,6 +19,7 @@ import type {
 } from "../types/database";
 import { rowToFeeding, feedingDisplayNote } from "../types/database";
 import { usePushNotifications } from "../hooks/usePushNotifications";
+import { showLocalNotification } from "../lib/push";
 import PumpTracker from "./PumpTracker";
 import "../App.css";
 import "../Auth.css";
@@ -59,6 +61,7 @@ export default function MilkTracker({
   const [now, setNow] = useState(Date.now());
   const [justLogged, setJustLogged] = useState(false);
   const [activeTab, setActiveTab] = useState<"today" | "history">("today");
+  const [selectedDateKey, setSelectedDateKey] = useState(todayStr());
   const [person, setPerson] = useState<"anaqi" | "mummy">("anaqi");
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotTime, setForgotTime] = useState(() =>
@@ -132,6 +135,20 @@ export default function MilkTracker({
     (a, b) => new Date(b).getTime() - new Date(a).getTime(),
   );
 
+  const allDateKeys = [...new Set(feedings.map((f) => new Date(f.timestamp).toDateString()))].sort(
+    (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+  );
+
+  const historyDateKeys =
+    activeTab === "today" ? [todayStr()] : allDateKeys.filter((k) => k !== todayStr());
+
+  const visibleDateKeys = activeTab === "today" ? [todayStr()] : historyDateKeys.length > 0 ? historyDateKeys : allDateKeys;
+
+  const selectedFeedings = feedings.filter(
+    (f) => new Date(f.timestamp).toDateString() === selectedDateKey,
+  );
+  const selectedTotal = selectedFeedings.reduce((s, f) => s + f.oz, 0);
+
   const logFeeding = useCallback(
     async (loggedAtTs: number) => {
       const parsed = parseFloat(oz);
@@ -157,6 +174,13 @@ export default function MilkTracker({
       setJustLogged(true);
       setTimeout(() => setJustLogged(false), 2000);
       fetchFeedings();
+
+      const noteParts = [milkType, note.trim()].filter(Boolean).join(" · ");
+      await showLocalNotification(
+        "🍼 Feed logged",
+        `Logged at ${formatTime(loggedAtTs)} · ${parsed}oz${noteParts ? ` · ${noteParts}` : ""}`,
+        "anaqi-feed-logged",
+      );
     },
     [oz, milkType, note, family.familyId, session.user.id, fetchFeedings],
   );
@@ -537,7 +561,10 @@ export default function MilkTracker({
             <button
               type="button"
               className={`tab-btn ${activeTab === "today" ? "active" : ""}`}
-              onClick={() => setActiveTab("today")}
+              onClick={() => {
+                setActiveTab("today");
+                setSelectedDateKey(todayStr());
+              }}
             >
               Today
               {todayFeedings.length > 0 && (
@@ -547,118 +574,116 @@ export default function MilkTracker({
             <button
               type="button"
               className={`tab-btn ${activeTab === "history" ? "active" : ""}`}
-              onClick={() => setActiveTab("history")}
+              onClick={() => {
+                setActiveTab("history");
+                const firstPast = allDateKeys.find((k) => k !== todayStr());
+                setSelectedDateKey(firstPast ?? todayStr());
+              }}
             >
               History
+              {pastDates.length > 0 && (
+                <span className="tab-badge">{pastDates.length}</span>
+              )}
             </button>
           </div>
 
-          {activeTab === "today" && (
-            <div className="card history-card">
-              {todayFeedings.length === 0 ? (
-                <p className="empty-state">No feedings logged today yet.</p>
-              ) : (
-                <ul className="feeding-list">
-                  {[...todayFeedings].reverse().map((f, i, arr) => {
+          <div className="card history-card">
+            {activeTab === "history" && pastDates.length === 0 ? (
+              <p className="empty-state">No past feedings recorded.</p>
+            ) : (
+              <>
+            {activeTab === "history" && visibleDateKeys.length > 0 && (
+              <div className="date-strip-wrap">
+                <p className="date-strip-label">Pick a day</p>
+                <div className="date-strip">
+                  {visibleDateKeys.map((dk) => {
+                    const dayItems = grouped[dk] ?? feedings.filter(
+                      (f) => new Date(f.timestamp).toDateString() === dk,
+                    );
+                    const dayTotal = dayItems.reduce((s, f) => s + f.oz, 0);
+                    return (
+                      <button
+                        key={dk}
+                        type="button"
+                        className={`date-pill ${selectedDateKey === dk ? "active" : ""}`}
+                        onClick={() => setSelectedDateKey(dk)}
+                      >
+                        <span className="date-pill-label">{formatDatePill(dk)}</span>
+                        <span className="date-pill-oz">{dayTotal.toFixed(1)}oz</span>
+                        <span className="date-pill-count">{dayItems.length}x</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {selectedFeedings.length === 0 ? (
+              <p className="empty-state">
+                {activeTab === "today"
+                  ? "No feedings logged today yet."
+                  : "No feedings on this day."}
+              </p>
+            ) : (
+              <>
+                <div className="day-hero">
+                  <div className="day-hero-left">
+                    <span className="day-hero-date">
+                      {formatDate(selectedFeedings[0].timestamp)}
+                    </span>
+                    <span className="day-hero-count">
+                      {selectedFeedings.length} feeding{selectedFeedings.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div className="day-hero-oz">
+                    <span className="day-hero-oz-num">{selectedTotal.toFixed(1)}</span>
+                    <span className="day-hero-oz-unit">oz total</span>
+                  </div>
+                </div>
+
+                <ul className="feeding-list feed-list-v2">
+                  {[...selectedFeedings].reverse().map((f, i, arr) => {
                     const prev = arr[i + 1];
                     const gap = prev ? f.timestamp - prev.timestamp : null;
                     const displayNote = feedingDisplayNote(f);
                     return (
                       <li key={f.id} className="feeding-item">
-                        {gap && (
+                        {gap && activeTab === "today" && (
                           <div className="feeding-gap">
                             {formatCountdown(gap).h > 0
                               ? `${formatCountdown(gap).h}h ${formatCountdown(gap).m}m gap`
                               : `${formatCountdown(gap).m}m gap`}
                           </div>
                         )}
-                        <div className="feeding-row">
-                          <div className="feeding-left">
-                            <span className="feeding-oz">{f.oz}oz</span>
+                        <div className="feed-row">
+                          <div className="feed-oz-block">
+                            <span className="feed-oz-num">{f.oz}</span>
+                            <span className="feed-oz-unit">oz</span>
+                          </div>
+                          <div className="feed-meta">
+                            <span className="feed-time">{formatTime(f.timestamp)}</span>
                             {displayNote && (
-                              <span className="feeding-note">
-                                {displayNote}
-                              </span>
+                              <span className="feed-note">{displayNote}</span>
                             )}
                           </div>
-                          <div className="feeding-right">
-                            <span className="feeding-time">
-                              {formatTime(f.timestamp)}
-                            </span>
-                            <button
-                              type="button"
-                              className="remove-btn"
-                              onClick={() => removeFeeding(f.id)}
-                              aria-label="Remove"
-                            >
-                              ×
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            className="remove-btn"
+                            onClick={() => removeFeeding(f.id)}
+                            aria-label="Remove"
+                          >
+                            ×
+                          </button>
                         </div>
                       </li>
                     );
                   })}
                 </ul>
-              )}
-            </div>
-          )}
-
-          {activeTab === "history" && (
-            <div className="card history-card">
-              {pastDates.length === 0 ? (
-                <p className="empty-state">No past feedings recorded.</p>
-              ) : (
-                pastDates.map((dk) => {
-                  const items = grouped[dk];
-                  const total = items.reduce((s, f) => s + f.oz, 0);
-                  return (
-                    <div key={dk} className="history-day">
-                      <div className="history-day-header">
-                        <span className="history-day-label">
-                          {formatDate(items[0].timestamp)}
-                        </span>
-                        <span className="history-day-total">
-                          {total.toFixed(1)}oz · {items.length}x
-                        </span>
-                      </div>
-                      <ul className="feeding-list">
-                        {[...items].reverse().map((f) => {
-                          const displayNote = feedingDisplayNote(f);
-                          return (
-                            <li key={f.id} className="feeding-item">
-                              <div className="feeding-row">
-                                <div className="feeding-left">
-                                  <span className="feeding-oz">{f.oz}oz</span>
-                                  {displayNote && (
-                                    <span className="feeding-note">
-                                      {displayNote}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="feeding-right">
-                                  <span className="feeding-time">
-                                    {formatTime(f.timestamp)}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="remove-btn"
-                                    onClick={() => removeFeeding(f.id)}
-                                    aria-label="Remove"
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
+              </>
+            )}
+              </>
+            )}
+          </div>
         </>
       )}
 

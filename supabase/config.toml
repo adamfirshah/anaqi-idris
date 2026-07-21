@@ -1,0 +1,9 @@
+# Supabase project config
+# After editing: npx supabase functions deploy send-feed-reminders
+
+project_id = "fglgfumhymdhqudauhrm"
+
+[functions.send-feed-reminders]
+verify_jwt = false
+# Run every minute — required for scheduled feed/pump notifications
+schedule = "* * * * *"

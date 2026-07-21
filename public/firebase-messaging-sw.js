@@ -8,16 +8,18 @@ firebase.initializeApp(self.FIREBASE_CONFIG)
 const messaging = firebase.messaging()
 
 messaging.onBackgroundMessage(payload => {
-  const noti = payload.notification ?? payload.webpush?.notification ?? {}
-  const title = noti.title ?? "Anaqi's Milk"
-  const body = noti.body ?? 'Time to check on feeding'
-  const icon = noti.icon ?? payload.data?.icon ?? '/icon.png'
+  // Data-only messages — show once here (no webpush.notification to avoid double pop-up)
+  const d = payload.data ?? {}
+  const title = d.title ?? "Anaqi's Milk"
+  const body = d.body ?? ''
+  const icon = d.icon ?? '/icon.png'
+  const tag = d.tag ?? 'anaqi-reminder'
   self.registration.showNotification(title, {
     body,
     icon,
     badge: icon,
-    tag: 'anaqi-reminder',
-    data: payload.data,
+    tag,
+    data: d,
   })
 })
 

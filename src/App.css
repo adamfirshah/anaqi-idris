@@ -496,6 +496,155 @@
   color: var(--text-muted);
 }
 
+/* ─── History v2: date strip + oz-first rows ─────────────────── */
+.date-strip-wrap {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+.date-strip-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.date-strip {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.date-strip::-webkit-scrollbar { display: none; }
+.date-pill {
+  flex: 0 0 auto;
+  min-width: 4.5rem;
+  padding: 0.55rem 0.65rem;
+  border: 2px solid #e2e8f0;
+  border-radius: 0.875rem;
+  background: #fff;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  transition: border-color 0.12s, background 0.12s;
+  -webkit-tap-highlight-color: transparent;
+}
+.date-pill.active {
+  border-color: var(--primary);
+  background: #f5f3ff;
+}
+.date-pill-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #475569;
+}
+.date-pill.active .date-pill-label { color: var(--primary); }
+.date-pill-oz {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #1e293b;
+  font-variant-numeric: tabular-nums;
+}
+.date-pill-count {
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.day-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 0.875rem;
+  padding: 0.875rem 1rem;
+  background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+  border-radius: 0.875rem;
+}
+.day-hero-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.day-hero-date {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #5b21b6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.day-hero-count {
+  font-size: 0.75rem;
+  color: #7c3aed;
+}
+.day-hero-oz {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1;
+}
+.day-hero-oz-num {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #4c1d95;
+  font-variant-numeric: tabular-nums;
+}
+.day-hero-oz-unit {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #7c3aed;
+  margin-top: 0.15rem;
+}
+
+.feed-list-v2 .feed-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.875rem;
+  background: #f8fafc;
+  border-radius: 0.875rem;
+}
+.feed-oz-block {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  min-width: 3.5rem;
+  flex-shrink: 0;
+}
+.feed-oz-num {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: #1e293b;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.feed-oz-unit {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #64748b;
+}
+.feed-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.feed-time {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.feed-note {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
 /* ─── Person tabs (Anaqi / Mummy) ────────────────────────────── */
 .person-tabs {
   display: flex;
@@ -545,6 +694,20 @@
 .app-mummy .pump-log-btn-missed:active { background: #d97706; }
 
 .app-mummy .pump-tab.active { background: #ec4899; }
+
+.app-mummy .date-pill-pump.active {
+  border-color: #ec4899;
+  background: #fdf2f8;
+}
+.app-mummy .date-pill-pump.active .date-pill-label { color: #db2777; }
+
+.app-mummy .day-hero-pump {
+  background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+}
+.app-mummy .day-hero-pump .day-hero-date { color: #9d174d; }
+.app-mummy .day-hero-pump .day-hero-count { color: #db2777; }
+.app-mummy .day-hero-pump .day-hero-oz-num { color: #831843; }
+.app-mummy .day-hero-pump .day-hero-oz-unit { color: #db2777; }
 
 .app-mummy .pump-banner {
   background: #fce7f3;

@@ -24,3 +24,14 @@ export async function registerFirebaseServiceWorker() {
   if (!('serviceWorker' in navigator)) return null
   return navigator.serviceWorker.register('/firebase-messaging-sw.js')
 }
+
+export async function showLocalNotification(
+  title: string,
+  body: string,
+  tag = 'anaqi-local',
+  icon = '/icon.png',
+) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  const reg = await navigator.serviceWorker.ready
+  await reg.showNotification(title, { body, icon, tag })
+}

@@ -17,6 +17,9 @@ async function saveToken(userId: string, token: string) {
     { onConflict: 'user_id,token' },
   )
   if (error) throw error
+
+  // Keep only the current device token — old tokens cause duplicate notifications
+  await supabase.from('fcm_tokens').delete().eq('user_id', userId).neq('token', token)
 }
 
 export function usePushNotifications(userId: string | undefined) {
@@ -39,11 +42,16 @@ export function usePushNotifications(userId: string | undefined) {
     if (!messaging) return
     listenerReady.current = true
     onMessage(messaging, payload => {
-      const title = payload.notification?.title ?? "Anaqi Idris's Milk"
-      const body = payload.notification?.body ?? ''
-      if (document.visibilityState === 'visible') {
-        new Notification(title, { body, icon: '/icon.png' })
-      }
+      // Data-only FCM — show here when app is open (SW handles background)
+      if (document.visibilityState !== 'visible') return
+      const d = payload.data ?? {}
+      const title = d.title ?? payload.notification?.title ?? "Anaqi Idris's Milk"
+      const body = d.body ?? payload.notification?.body ?? ''
+      const icon = d.icon ?? '/icon.png'
+      const tag = d.tag ?? 'anaqi-reminder'
+      navigator.serviceWorker.ready.then(reg =>
+        reg.showNotification(title, { body, icon, tag }),
+      )
     })
   }, [])
 

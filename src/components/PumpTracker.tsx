@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import {
   formatTime,
   formatDate,
+  formatDatePill,
   todayStr,
   formatCountdown,
   formatElapsed,
@@ -45,6 +46,7 @@ export default function PumpTracker({ session, family }: Props) {
   const [now, setNow] = useState(Date.now())
   const [justLogged, setJustLogged] = useState(false)
   const [activeTab, setActiveTab] = useState<'today' | 'history'>('today')
+  const [selectedDateKey, setSelectedDateKey] = useState(todayStr())
   const [forgotOpen, setForgotOpen] = useState(false)
   const [forgotTime, setForgotTime] = useState(() => toTimeInputValue(Date.now() - 30 * 60 * 1000))
   const [error, setError] = useState('')
@@ -107,6 +109,19 @@ export default function PumpTracker({ session, family }: Props) {
   const pastDates = Object.keys(grouped).sort(
     (a, b) => new Date(b).getTime() - new Date(a).getTime(),
   )
+
+  const allDateKeys = [...new Set(sessions.map(s => new Date(s.timestamp).toDateString()))].sort(
+    (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+  )
+
+  const historyDateKeys = allDateKeys.filter(k => k !== todayStr())
+  const visibleDateKeys =
+    activeTab === 'today' ? [todayStr()] : historyDateKeys.length > 0 ? historyDateKeys : allDateKeys
+
+  const selectedSessions = sessions.filter(
+    s => new Date(s.timestamp).toDateString() === selectedDateKey,
+  )
+  const selectedTotal = selectedSessions.reduce((sum, s) => sum + s.oz, 0)
 
   const logSession = useCallback(async (loggedAtTs: number) => {
     const parsed = parseFloat(oz)
@@ -241,11 +256,9 @@ export default function PumpTracker({ session, family }: Props) {
         </div>
         <div className="stat-box pump-stat">
           <span className="stat-value">
-            {todaySessions.length > 0
-              ? (dailyOz / todaySessions.length).toFixed(1)
-              : '—'}
+          {formatTime(nextPumpTs)}
           </span>
-          <p className="stat-label">Avg / session</p>
+          <p className="stat-label">Next pump</p>
         </div>
       </div>
 
@@ -385,7 +398,10 @@ export default function PumpTracker({ session, family }: Props) {
         <button
           type="button"
           className={`tab-btn pump-tab ${activeTab === 'today' ? 'active' : ''}`}
-          onClick={() => setActiveTab('today')}
+          onClick={() => {
+            setActiveTab('today')
+            setSelectedDateKey(todayStr())
+          }}
         >
           Today
           {todaySessions.length > 0 && <span className="tab-badge">{todaySessions.length}</span>}
@@ -393,98 +409,110 @@ export default function PumpTracker({ session, family }: Props) {
         <button
           type="button"
           className={`tab-btn pump-tab ${activeTab === 'history' ? 'active' : ''}`}
-          onClick={() => setActiveTab('history')}
+          onClick={() => {
+            setActiveTab('history')
+            const firstPast = allDateKeys.find(k => k !== todayStr())
+            setSelectedDateKey(firstPast ?? todayStr())
+          }}
         >
           History
+          {pastDates.length > 0 && <span className="tab-badge">{pastDates.length}</span>}
         </button>
       </div>
 
-      {activeTab === 'today' && (
-        <div className="card history-card">
-          {todaySessions.length === 0 ? (
-            <p className="empty-state">No pump sessions logged today yet.</p>
-          ) : (
-            <ul className="feeding-list">
-              {[...todaySessions].reverse().map((s, i, arr) => {
-                const prev = arr[i + 1]
-                const gap = prev ? s.timestamp - prev.timestamp : null
-                const displayNote = pumpDisplayNote(s)
-                return (
-                  <li key={s.id} className="feeding-item">
-                    {gap && (
-                      <div className="feeding-gap">
-                        {formatCountdown(gap).h > 0
-                          ? `${formatCountdown(gap).h}h ${formatCountdown(gap).m}m gap`
-                          : `${formatCountdown(gap).m}m gap`}
-                      </div>
-                    )}
-                    <div className="feeding-row">
-                      <div className="feeding-left">
-                        <span className="feeding-oz">{s.oz}oz</span>
-                        {displayNote && <span className="feeding-note">{displayNote}</span>}
-                      </div>
-                      <div className="feeding-right">
-                        <span className="feeding-time">{formatTime(s.timestamp)}</span>
-                        <button
-                          type="button"
-                          className="remove-btn"
-                          onClick={() => removeSession(s.id)}
-                          aria-label="Remove"
-                        >×</button>
-                      </div>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'history' && (
-        <div className="card history-card">
-          {pastDates.length === 0 ? (
-            <p className="empty-state">No past pump sessions recorded.</p>
-          ) : (
-            pastDates.map(dk => {
-              const items = grouped[dk]
-              const total = items.reduce((sum, s) => sum + s.oz, 0)
-              return (
-                <div key={dk} className="history-day">
-                  <div className="history-day-header">
-                    <span className="history-day-label">{formatDate(items[0].timestamp)}</span>
-                    <span className="history-day-total">{total.toFixed(1)}oz · {items.length}x</span>
-                  </div>
-                  <ul className="feeding-list">
-                    {[...items].reverse().map(s => {
-                      const displayNote = pumpDisplayNote(s)
-                      return (
-                        <li key={s.id} className="feeding-item">
-                          <div className="feeding-row">
-                            <div className="feeding-left">
-                              <span className="feeding-oz">{s.oz}oz</span>
-                              {displayNote && <span className="feeding-note">{displayNote}</span>}
-                            </div>
-                            <div className="feeding-right">
-                              <span className="feeding-time">{formatTime(s.timestamp)}</span>
-                              <button
-                                type="button"
-                                className="remove-btn"
-                                onClick={() => removeSession(s.id)}
-                                aria-label="Remove"
-                              >×</button>
-                            </div>
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
+      <div className="card history-card">
+        {activeTab === 'history' && pastDates.length === 0 ? (
+          <p className="empty-state">No past pump sessions recorded.</p>
+        ) : (
+          <>
+            {activeTab === 'history' && visibleDateKeys.length > 0 && (
+              <div className="date-strip-wrap">
+                <p className="date-strip-label">Pick a day</p>
+                <div className="date-strip">
+                  {visibleDateKeys.map(dk => {
+                    const dayItems = grouped[dk] ?? sessions.filter(
+                      s => new Date(s.timestamp).toDateString() === dk,
+                    )
+                    const dayTotal = dayItems.reduce((sum, s) => sum + s.oz, 0)
+                    return (
+                      <button
+                        key={dk}
+                        type="button"
+                        className={`date-pill date-pill-pump ${selectedDateKey === dk ? 'active' : ''}`}
+                        onClick={() => setSelectedDateKey(dk)}
+                      >
+                        <span className="date-pill-label">{formatDatePill(dk)}</span>
+                        <span className="date-pill-oz">{dayTotal.toFixed(1)}oz</span>
+                        <span className="date-pill-count">{dayItems.length}x</span>
+                      </button>
+                    )
+                  })}
                 </div>
-              )
-            })
-          )}
-        </div>
-      )}
+              </div>
+            )}
+
+            {selectedSessions.length === 0 ? (
+              <p className="empty-state">
+                {activeTab === 'today'
+                  ? 'No pump sessions logged today yet.'
+                  : 'No sessions on this day.'}
+              </p>
+            ) : (
+              <>
+                <div className="day-hero day-hero-pump">
+                  <div className="day-hero-left">
+                    <span className="day-hero-date">
+                      {formatDate(selectedSessions[0].timestamp)}
+                    </span>
+                    <span className="day-hero-count">
+                      {selectedSessions.length} session{selectedSessions.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="day-hero-oz">
+                    <span className="day-hero-oz-num">{selectedTotal.toFixed(1)}</span>
+                    <span className="day-hero-oz-unit">oz total</span>
+                  </div>
+                </div>
+
+                <ul className="feeding-list feed-list-v2">
+                  {[...selectedSessions].reverse().map((s, i, arr) => {
+                    const prev = arr[i + 1]
+                    const gap = prev ? s.timestamp - prev.timestamp : null
+                    const displayNote = pumpDisplayNote(s)
+                    return (
+                      <li key={s.id} className="feeding-item">
+                        {gap && activeTab === 'today' && (
+                          <div className="feeding-gap">
+                            {formatCountdown(gap).h > 0
+                              ? `${formatCountdown(gap).h}h ${formatCountdown(gap).m}m gap`
+                              : `${formatCountdown(gap).m}m gap`}
+                          </div>
+                        )}
+                        <div className="feed-row">
+                          <div className="feed-oz-block">
+                            <span className="feed-oz-num">{s.oz}</span>
+                            <span className="feed-oz-unit">oz</span>
+                          </div>
+                          <div className="feed-meta">
+                            <span className="feed-time">{formatTime(s.timestamp)}</span>
+                            {displayNote && <span className="feed-note">{displayNote}</span>}
+                          </div>
+                          <button
+                            type="button"
+                            className="remove-btn"
+                            onClick={() => removeSession(s.id)}
+                            aria-label="Remove"
+                          >×</button>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            )}
+          </>
+        )}
+      </div>
     </>
   )
 }
