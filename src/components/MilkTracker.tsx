@@ -6,6 +6,7 @@ import {
   formatDate,
   formatDatePill,
   todayStr,
+  todayIsoDate,
   formatCountdown,
   formatElapsed,
   toTimeInputValue,
@@ -107,6 +108,61 @@ function writeStoredFridge(familyId: string, data: StoredFridge) {
   }
 }
 
+function appetonStorageKey(familyId: string) {
+  return `appeton-logs-${familyId}`;
+}
+
+function isoDateToDateKey(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toDateString();
+}
+
+function dateKeyToIso(dateKey: string): string {
+  return new Date(dateKey).toLocaleDateString("en-CA");
+}
+
+function readStoredAppetonLogs(familyId: string): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(appetonStorageKey(familyId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredAppetonLogs(familyId: string, logs: Record<string, number>) {
+  try {
+    localStorage.setItem(appetonStorageKey(familyId), JSON.stringify(logs));
+  } catch {
+    /* ignore */
+  }
+}
+
+type ActivityItem =
+  | { kind: "feeding"; feeding: Feeding }
+  | { kind: "appeton"; timestamp: number };
+
+function buildActivityList(
+  feedings: Feeding[],
+  appetonTs: number | null,
+): ActivityItem[] {
+  const items: ActivityItem[] = feedings.map((feeding) => ({
+    kind: "feeding",
+    feeding,
+  }));
+  if (appetonTs != null) {
+    items.push({ kind: "appeton", timestamp: appetonTs });
+  }
+  return items.sort((a, b) => {
+    const ta = a.kind === "feeding" ? a.feeding.timestamp : a.timestamp;
+    const tb = b.kind === "feeding" ? b.feeding.timestamp : b.timestamp;
+    return ta - tb;
+  });
+}
+
 interface Props {
   session: Session;
   family: FamilyInfo;
@@ -146,6 +202,11 @@ export default function MilkTracker({
   const fridgeEbmRef = useRef(fridgeEbmCount);
   const fridgeUpdatedAtRef = useRef(fridgeUpdatedAt);
   const fridgeUpdatingRef = useRef(false);
+  const [appetonLogs, setAppetonLogs] = useState<Record<string, number>>(
+    () => readStoredAppetonLogs(family.familyId),
+  );
+  const [appetonSaving, setAppetonSaving] = useState(false);
+  const appetonDoneToday = appetonLogs[todayStr()] != null;
   const { notiStatus, notiError, iosHint, enableNotifications } = usePushNotifications(
     session.user.id,
   );
@@ -216,6 +277,92 @@ export default function MilkTracker({
     persistFridge(fromDb, updatedAt);
   }, [family.familyId, persistFridge]);
 
+  const fetchAppeton = useCallback(async () => {
+    const { data, error: fetchError } = await supabase
+      .from("daily_appeton")
+      .select("log_date, logged_at")
+      .eq("family_id", family.familyId)
+      .order("log_date", { ascending: false });
+
+    if (fetchError) {
+      if (!isMissingTableError(fetchError.message)) {
+        setError(fetchError.message);
+      }
+      return;
+    }
+
+    const fromDb: Record<string, number> = {};
+    for (const row of data ?? []) {
+      fromDb[isoDateToDateKey(row.log_date as string)] = new Date(
+        row.logged_at as string,
+      ).getTime();
+    }
+
+    setAppetonLogs((prev) => {
+      const merged = { ...readStoredAppetonLogs(family.familyId), ...prev, ...fromDb };
+      writeStoredAppetonLogs(family.familyId, merged);
+      return merged;
+    });
+  }, [family.familyId]);
+
+  const markAppetonDone = useCallback(async () => {
+    const today = todayIsoDate();
+    const loggedAt = Date.now();
+    const dateKey = todayStr();
+
+    setAppetonSaving(true);
+    setAppetonLogs((prev) => {
+      const next = { ...prev, [dateKey]: loggedAt };
+      writeStoredAppetonLogs(family.familyId, next);
+      return next;
+    });
+    setError("");
+
+    const { error: insertError } = await supabase.from("daily_appeton").insert({
+      family_id: family.familyId,
+      log_date: today,
+      logged_at: new Date(loggedAt).toISOString(),
+      logged_by: session.user.id,
+    });
+
+    setAppetonSaving(false);
+
+    if (insertError) {
+      if (
+        !isMissingTableError(insertError.message) &&
+        !insertError.message.includes("duplicate key")
+      ) {
+        setError(insertError.message);
+      }
+    }
+  }, [family.familyId, session.user.id]);
+
+  const removeAppeton = useCallback(
+    async (dateKey: string) => {
+      const snapshot = { ...appetonLogs };
+      setAppetonLogs((prev) => {
+        const next = { ...prev };
+        delete next[dateKey];
+        writeStoredAppetonLogs(family.familyId, next);
+        return next;
+      });
+      setError("");
+
+      const { error: deleteError } = await supabase
+        .from("daily_appeton")
+        .delete()
+        .eq("family_id", family.familyId)
+        .eq("log_date", dateKeyToIso(dateKey));
+
+      if (deleteError && !isMissingTableError(deleteError.message)) {
+        setAppetonLogs(snapshot);
+        writeStoredAppetonLogs(family.familyId, snapshot);
+        setError(deleteError.message);
+      }
+    },
+    [appetonLogs, family.familyId],
+  );
+
   const fetchFeedings = useCallback(async () => {
     const { data, error: fetchError } = await supabase
       .from("feedings")
@@ -235,6 +382,7 @@ export default function MilkTracker({
     fetchFeedings();
     fetchGrowth();
     fetchFridgeEbm();
+    fetchAppeton();
 
     const feedingsChannel = supabase
       .channel("feedings-changes")
@@ -263,12 +411,22 @@ export default function MilkTracker({
       )
       .subscribe();
 
+    const appetonChannel = supabase
+      .channel("daily-appeton-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "daily_appeton" },
+        () => fetchAppeton(),
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(feedingsChannel);
       supabase.removeChannel(growthChannel);
       supabase.removeChannel(fridgeChannel);
+      supabase.removeChannel(appetonChannel);
     };
-  }, [fetchFeedings, fetchGrowth, fetchFridgeEbm]);
+  }, [fetchFeedings, fetchGrowth, fetchFridgeEbm, fetchAppeton]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -321,6 +479,12 @@ export default function MilkTracker({
   );
   const selectedTotal = selectedFeedings.reduce((s, f) => s + f.oz, 0);
   const selectedMilk = dayMilkTotals(selectedFeedings);
+  const selectedAppetonTs = appetonLogs[selectedDateKey] ?? null;
+  const selectedActivity = buildActivityList(
+    selectedFeedings,
+    selectedAppetonTs,
+  );
+  const hasSelectedActivity = selectedActivity.length > 0;
 
   const logFeeding = useCallback(
     async (loggedAtTs: number) => {
@@ -772,6 +936,17 @@ export default function MilkTracker({
               ))}
             </div>
 
+            {!appetonDoneToday && (
+              <button
+                type="button"
+                className="appeton-btn"
+                disabled={appetonSaving}
+                onClick={markAppetonDone}
+              >
+                {appetonSaving ? "Saving…" : "💊 Appeton"}
+              </button>
+            )}
+
             <input
               type="text"
               className="note-input"
@@ -780,7 +955,7 @@ export default function MilkTracker({
               placeholder="remark"
               maxLength={80}
             />
-
+{/* 
             {lastFeeding && (
               <div className="time-preview">
                 <span className="time-preview-label">Last fed was</span>
@@ -793,7 +968,7 @@ export default function MilkTracker({
                   {formatTime(lastFeeding.timestamp + FEED_INTERVAL_MS)}
                 </span>
               </div>
-            )}
+            )} */}
 
             <button
               type="button"
@@ -905,110 +1080,148 @@ export default function MilkTracker({
               <p className="empty-state">No past feedings recorded.</p>
             ) : (
               <>
-            {activeTab === "history" && visibleDateKeys.length > 0 && (
-              <div className="date-strip-wrap">
-                <p className="date-strip-label">Pick a day</p>
-                <div className="date-strip">
-                  {visibleDateKeys.map((dk) => {
-                    const dayItems = grouped[dk] ?? feedings.filter(
-                      (f) => new Date(f.timestamp).toDateString() === dk,
-                    );
-                    const dayTotal = dayItems.reduce((s, f) => s + f.oz, 0);
-                    return (
-                      <button
-                        key={dk}
-                        type="button"
-                        className={`date-pill ${selectedDateKey === dk ? "active" : ""}`}
-                        onClick={() => setSelectedDateKey(dk)}
-                      >
-                        <span className="date-pill-label">{formatDatePill(dk)}</span>
-                        <span className="date-pill-oz">{dayTotal.toFixed(1)}oz</span>
-                        <span className="date-pill-count">{dayItems.length}x</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {selectedFeedings.length === 0 ? (
-              <p className="empty-state">
-                {activeTab === "today"
-                  ? "No feedings logged today yet."
-                  : "No feedings on this day."}
-              </p>
-            ) : (
-              <>
-                <div className="day-hero">
-                  <div className="day-hero-left">
-                    <span className="day-hero-date">
-                      {formatDate(selectedFeedings[0].timestamp)}
-                    </span>
-                    <span className="day-hero-count">
-                      {selectedFeedings.length} feeding{selectedFeedings.length !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  <div className="day-hero-oz">
-                    <span className="day-hero-oz-num">{selectedTotal.toFixed(1)}</span>
-                    <span className="day-hero-oz-unit">oz total</span>
-                  </div>
-                </div>
-
-                {activeTab === "history" && (
-                  <div className="day-milk-split">
-                    <div className="day-milk-item">
-                      <span className="day-milk-num">{selectedMilk.ebm.toFixed(1)}</span>
-                      <span className="day-milk-unit">oz</span>
-                      <span className="day-milk-label">EBM</span>
-                    </div>
-                    <div className="day-milk-item">
-                      <span className="day-milk-num">{selectedMilk.fm.toFixed(1)}</span>
-                      <span className="day-milk-unit">oz</span>
-                      <span className="day-milk-label">FM</span>
+                {activeTab === "history" && visibleDateKeys.length > 0 && (
+                  <div className="date-strip-wrap">
+                    <p className="date-strip-label">Pick a day</p>
+                    <div className="date-strip">
+                      {visibleDateKeys.map((dk) => {
+                        const dayItems = grouped[dk] ?? feedings.filter(
+                          (f) => new Date(f.timestamp).toDateString() === dk,
+                        );
+                        const dayTotal = dayItems.reduce((s, f) => s + f.oz, 0);
+                        return (
+                          <button
+                            key={dk}
+                            type="button"
+                            className={`date-pill ${selectedDateKey === dk ? "active" : ""}`}
+                            onClick={() => setSelectedDateKey(dk)}
+                          >
+                            <span className="date-pill-label">{formatDatePill(dk)}</span>
+                            <span className="date-pill-oz">{dayTotal.toFixed(1)}oz</span>
+                            <span className="date-pill-count">{dayItems.length}x</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
 
-                <ul className="feeding-list feed-list-v2">
-                  {[...selectedFeedings].reverse().map((f, i, arr) => {
-                    const prev = arr[i + 1];
-                    const gap = prev ? f.timestamp - prev.timestamp : null;
-                    const displayNote = feedingDisplayNote(f);
-                    return (
-                      <li key={f.id} className="feeding-item">
-                        {gap && activeTab === "today" && (
-                          <div className="feeding-gap">
-                            {formatCountdown(gap).h > 0
-                              ? `${formatCountdown(gap).h}h ${formatCountdown(gap).m}m gap`
-                              : `${formatCountdown(gap).m}m gap`}
-                          </div>
-                        )}
-                        <div className="feed-row">
-                          <div className="feed-oz-block">
-                            <span className="feed-oz-num">{f.oz}</span>
-                            <span className="feed-oz-unit">oz</span>
-                          </div>
-                          <div className="feed-meta">
-                            <span className="feed-time">{formatTime(f.timestamp)}</span>
-                            {displayNote && (
-                              <span className="feed-note">{displayNote}</span>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            className="remove-btn"
-                            onClick={() => removeFeeding(f.id)}
-                            aria-label="Remove"
-                          >
-                            ×
-                          </button>
+                {!hasSelectedActivity ? (
+                  <p className="empty-state">
+                    {activeTab === "today"
+                      ? "No feedings logged today yet."
+                      : "No feedings on this day."}
+                  </p>
+                ) : (
+                  <>
+                    <div className="day-hero">
+                      <div className="day-hero-left">
+                        <span className="day-hero-date">
+                          {formatDate(
+                            selectedFeedings[0]?.timestamp ??
+                              selectedAppetonTs ??
+                              Date.now(),
+                          )}
+                        </span>
+                        <span className="day-hero-count">
+                          {selectedFeedings.length} feeding
+                          {selectedFeedings.length !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                      <div className="day-hero-oz">
+                        <span className="day-hero-oz-num">{selectedTotal.toFixed(1)}</span>
+                        <span className="day-hero-oz-unit">oz total</span>
+                      </div>
+                    </div>
+
+                    {activeTab === "history" && (
+                      <div className="day-milk-split">
+                        <div className="day-milk-item">
+                          <span className="day-milk-num">{selectedMilk.ebm.toFixed(1)}</span>
+                          <span className="day-milk-unit">oz</span>
+                          <span className="day-milk-label">EBM</span>
                         </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </>
-            )}
+                        <div className="day-milk-item">
+                          <span className="day-milk-num">{selectedMilk.fm.toFixed(1)}</span>
+                          <span className="day-milk-unit">oz</span>
+                          <span className="day-milk-label">FM</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <ul className="feeding-list feed-list-v2">
+                      {[...selectedActivity].reverse().map((item, i, arr) => {
+                        if (item.kind === "appeton") {
+                          return (
+                            <li key="appeton" className="feeding-item">
+                              <div className="activity-log-row">
+                                <span className="activity-log-icon">💊</span>
+                                <div className="activity-log-meta">
+                                  <span className="activity-log-text">
+                                  Idris has already taken Appeton!
+                                  </span>
+                                  <span className="feed-time">
+                                    {formatTime(item.timestamp)}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="remove-btn"
+                                  onClick={() => removeAppeton(selectedDateKey)}
+                                  aria-label="Remove Appeton log"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        }
+
+                        const f = item.feeding;
+                        const prevItem = arr[i + 1];
+                        const prevTs =
+                          prevItem?.kind === "feeding"
+                            ? prevItem.feeding.timestamp
+                            : prevItem?.kind === "appeton"
+                              ? prevItem.timestamp
+                              : null;
+                        const gap = prevTs ? f.timestamp - prevTs : null;
+                        const displayNote = feedingDisplayNote(f);
+                        return (
+                          <li key={f.id} className="feeding-item">
+                            {gap && activeTab === "today" && (
+                              <div className="feeding-gap">
+                                {formatCountdown(gap).h > 0
+                                  ? `${formatCountdown(gap).h}h ${formatCountdown(gap).m}m gap`
+                                  : `${formatCountdown(gap).m}m gap`}
+                              </div>
+                            )}
+                            <div className="feed-row">
+                              <div className="feed-oz-block">
+                                <span className="feed-oz-num">{f.oz}</span>
+                                <span className="feed-oz-unit">oz</span>
+                              </div>
+                              <div className="feed-meta">
+                                <span className="feed-time">{formatTime(f.timestamp)}</span>
+                                {displayNote && (
+                                  <span className="feed-note">{displayNote}</span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                className="remove-btn"
+                                onClick={() => removeFeeding(f.id)}
+                                aria-label="Remove"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                )}
               </>
             )}
           </div>

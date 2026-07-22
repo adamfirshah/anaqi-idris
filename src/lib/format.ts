@@ -20,6 +20,10 @@ export function todayStr() {
   return new Date().toDateString()
 }
 
+export function todayIsoDate() {
+  return new Date().toLocaleDateString('en-CA')
+}
+
 export function formatCountdown(ms: number): { h: number; m: number; overdue: boolean } {
   const overdue = ms < 0
   const abs = Math.abs(ms)
