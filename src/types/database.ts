@@ -80,3 +80,30 @@ export function pumpDisplayNote(s: PumpSession): string {
   if (s.note.trim()) parts.push(s.note.trim())
   return parts.join(' · ')
 }
+
+export interface BabyMeasurementRow {
+  id: string
+  family_id: string
+  measured_at: string
+  weight_kg: number | null
+  height_cm: number | null
+  logged_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BabyMeasurement {
+  id: string
+  measuredAt: number
+  weightKg: number | null
+  heightCm: number | null
+}
+
+export function rowToBabyMeasurement(row: BabyMeasurementRow): BabyMeasurement {
+  return {
+    id: row.id,
+    measuredAt: new Date(row.measured_at).getTime(),
+    weightKg: row.weight_kg != null ? Number(row.weight_kg) : null,
+    heightCm: row.height_cm != null ? Number(row.height_cm) : null,
+  }
+}

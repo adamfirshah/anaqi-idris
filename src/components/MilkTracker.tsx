@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import {
@@ -16,8 +16,10 @@ import type {
   Feeding,
   FeedingRow,
   MilkType,
+  BabyMeasurement,
+  BabyMeasurementRow,
 } from "../types/database";
-import { rowToFeeding, feedingDisplayNote } from "../types/database";
+import { rowToFeeding, feedingDisplayNote, rowToBabyMeasurement } from "../types/database";
 import { usePushNotifications } from "../hooks/usePushNotifications";
 import { showLocalNotification } from "../lib/push";
 import PumpTracker from "./PumpTracker";
@@ -29,6 +31,7 @@ const PREPARE_WARN_MS = 60 * 60 * 1000;
 const QUICK_OZ = [2, 2.5, 3, 3.5, 4];
 const MILK_TYPES = ["FM", "EBM", "BM"] as const;
 const FORGOT_AGO_MIN = [15, 30, 45, 60] as const;
+const FRIDGE_EBM_STEP = 1;
 
 type Status = "none" | "ok" | "prepare" | "overdue";
 
@@ -38,6 +41,58 @@ function getStatus(lastTs: number | null, now: number): Status {
   if (remaining < 0) return "overdue";
   if (remaining <= PREPARE_WARN_MS) return "prepare";
   return "ok";
+}
+
+function isMissingTableError(message: string) {
+  return (
+    message.includes("does not exist") ||
+    message.includes("schema cache") ||
+    message.includes("Could not find the table") ||
+    message.includes("Could not find the column")
+  );
+}
+
+function fridgeStorageKey(familyId: string) {
+  return `fridge-ebm-${familyId}`;
+}
+
+interface StoredFridge {
+  count: number;
+  updatedAt: number | null;
+}
+
+function readStoredFridge(familyId: string): StoredFridge {
+  try {
+    const raw = localStorage.getItem(fridgeStorageKey(familyId));
+    if (raw == null) return { count: 0, updatedAt: null };
+    try {
+      const parsed = JSON.parse(raw) as StoredFridge;
+      if (parsed && typeof parsed.count === "number") {
+        return {
+          count: parsed.count >= 0 ? parsed.count : 0,
+          updatedAt:
+            typeof parsed.updatedAt === "number" ? parsed.updatedAt : null,
+        };
+      }
+    } catch {
+      /* legacy plain number string */
+    }
+    const n = parseInt(raw, 10);
+    return {
+      count: Number.isFinite(n) && n >= 0 ? n : 0,
+      updatedAt: null,
+    };
+  } catch {
+    return { count: 0, updatedAt: null };
+  }
+}
+
+function writeStoredFridge(familyId: string, data: StoredFridge) {
+  try {
+    localStorage.setItem(fridgeStorageKey(familyId), JSON.stringify(data));
+  } catch {
+    /* ignore quota / private mode */
+  }
 }
 
 interface Props {
@@ -68,9 +123,86 @@ export default function MilkTracker({
     toTimeInputValue(Date.now() - 30 * 60 * 1000),
   );
   const [error, setError] = useState("");
+  const [latestMeasurement, setLatestMeasurement] = useState<BabyMeasurement | null>(null);
+  const [growthOpen, setGrowthOpen] = useState(false);
+  const storedFridge = readStoredFridge(family.familyId);
+  const [fridgeEbmCount, setFridgeEbmCount] = useState(storedFridge.count);
+  const [fridgeUpdatedAt, setFridgeUpdatedAt] = useState<number | null>(
+    storedFridge.updatedAt,
+  );
+  const [fridgeUpdating, setFridgeUpdating] = useState(false);
+  const fridgeEbmRef = useRef(fridgeEbmCount);
+  const fridgeUpdatedAtRef = useRef(fridgeUpdatedAt);
+  const fridgeUpdatingRef = useRef(false);
   const { notiStatus, notiError, iosHint, enableNotifications } = usePushNotifications(
     session.user.id,
   );
+
+  const persistFridge = useCallback(
+    (count: number, updatedAt: number | null) => {
+      fridgeEbmRef.current = count;
+      fridgeUpdatedAtRef.current = updatedAt;
+      setFridgeEbmCount(count);
+      setFridgeUpdatedAt(updatedAt);
+      writeStoredFridge(family.familyId, { count, updatedAt });
+    },
+    [family.familyId],
+  );
+
+  useEffect(() => {
+    fridgeEbmRef.current = fridgeEbmCount;
+  }, [fridgeEbmCount]);
+
+  useEffect(() => {
+    fridgeUpdatedAtRef.current = fridgeUpdatedAt;
+  }, [fridgeUpdatedAt]);
+
+  const fetchGrowth = useCallback(async () => {
+    const { data, error: fetchError } = await supabase
+      .from("baby_measurements")
+      .select("*")
+      .order("measured_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (fetchError) {
+      if (!isMissingTableError(fetchError.message)) {
+        setError(fetchError.message);
+      }
+      return;
+    }
+
+    setLatestMeasurement(
+      data ? rowToBabyMeasurement(data as BabyMeasurementRow) : null,
+    );
+  }, []);
+
+  const fetchFridgeEbm = useCallback(async () => {
+    if (fridgeUpdatingRef.current) return;
+
+    const { data, error: fetchError } = await supabase
+      .from("family_fridge")
+      .select("ebm_count, updated_at")
+      .eq("family_id", family.familyId)
+      .maybeSingle();
+
+    if (fetchError) {
+      if (!isMissingTableError(fetchError.message)) {
+        setError(fetchError.message);
+      }
+      return;
+    }
+
+    if (data == null) return;
+
+    const fromDb = Number(data.ebm_count);
+    if (!Number.isFinite(fromDb) || fromDb < 0) return;
+
+    const updatedAt = data.updated_at
+      ? new Date(data.updated_at).getTime()
+      : null;
+    persistFridge(fromDb, updatedAt);
+  }, [family.familyId, persistFridge]);
 
   const fetchFeedings = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -89,8 +221,10 @@ export default function MilkTracker({
 
   useEffect(() => {
     fetchFeedings();
+    fetchGrowth();
+    fetchFridgeEbm();
 
-    const channel = supabase
+    const feedingsChannel = supabase
       .channel("feedings-changes")
       .on(
         "postgres_changes",
@@ -99,10 +233,30 @@ export default function MilkTracker({
       )
       .subscribe();
 
+    const growthChannel = supabase
+      .channel("baby-measurements-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "baby_measurements" },
+        () => fetchGrowth(),
+      )
+      .subscribe();
+
+    const fridgeChannel = supabase
+      .channel("family-fridge-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "family_fridge" },
+        () => fetchFridgeEbm(),
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(feedingsChannel);
+      supabase.removeChannel(growthChannel);
+      supabase.removeChannel(fridgeChannel);
     };
-  }, [fetchFeedings]);
+  }, [fetchFeedings, fetchGrowth, fetchFridgeEbm]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -122,6 +276,12 @@ export default function MilkTracker({
     (f) => new Date(f.timestamp).toDateString() === todayStr(),
   );
   const dailyOz = todayFeedings.reduce((s, f) => s + f.oz, 0);
+  const todayEbmOz = todayFeedings
+    .filter((f) => f.milkType === "EBM")
+    .reduce((s, f) => s + f.oz, 0);
+  const todayFmOz = todayFeedings
+    .filter((f) => f.milkType === "FM")
+    .reduce((s, f) => s + f.oz, 0);
 
   const pastFeedings = feedings.filter(
     (f) => new Date(f.timestamp).toDateString() !== todayStr(),
@@ -197,6 +357,42 @@ export default function MilkTracker({
     [fetchFeedings],
   );
 
+  const adjustFridgeEbm = useCallback(
+    async (delta: number) => {
+      const prev = fridgeEbmRef.current;
+      const prevUpdatedAt = fridgeUpdatedAtRef.current;
+      const next = Math.max(0, prev + delta);
+      if (next === prev) return;
+
+      const updatedAt = Date.now();
+      fridgeUpdatingRef.current = true;
+      setFridgeUpdating(true);
+      persistFridge(next, updatedAt);
+      setError("");
+
+      const { error: upsertError } = await supabase.from("family_fridge").upsert(
+        {
+          family_id: family.familyId,
+          ebm_count: next,
+          updated_at: new Date(updatedAt).toISOString(),
+        },
+        { onConflict: "family_id" },
+      );
+
+      fridgeUpdatingRef.current = false;
+      setFridgeUpdating(false);
+
+      if (upsertError) {
+        if (isMissingTableError(upsertError.message)) {
+          return;
+        }
+        persistFridge(prev, prevUpdatedAt);
+        setError(upsertError.message);
+      }
+    },
+    [family.familyId, persistFridge],
+  );
+
   const forgotTs = todayTimeInputToTimestamp(forgotTime);
   const forgotValid =
     forgotTs <= Date.now() &&
@@ -260,7 +456,7 @@ export default function MilkTracker({
           className={`person-tab ${person === "anaqi" ? "active" : ""}`}
           onClick={() => setPerson("anaqi")}
         >
-          👶 Anaqi
+          👶 Idris
         </button>
         <button
           type="button"
@@ -291,6 +487,61 @@ export default function MilkTracker({
               {notiError}
             </p>
           )}
+
+          <div className={`growth-collapse ${growthOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="growth-collapse-toggle"
+              onClick={() => setGrowthOpen((open) => !open)}
+              aria-expanded={growthOpen}
+            >
+              <span className="growth-collapse-title">Growth</span>
+              <span className="growth-collapse-summary">
+                {latestMeasurement?.weightKg != null ? (
+                  <>
+                    {latestMeasurement.weightKg} kg
+                    <span className="growth-collapse-date">
+                      · {formatDate(latestMeasurement.measuredAt)}
+                    </span>
+                  </>
+                ) : (
+                  "No data yet"
+                )}
+              </span>
+              <span className="growth-collapse-chevron" aria-hidden>
+                {growthOpen ? "▾" : "▸"}
+              </span>
+            </button>
+            {growthOpen && (
+              <div className="growth-collapse-body">
+                <div className="growth-collapse-stats">
+                  <div className="stat-box">
+                    <span className="stat-value">
+                      {latestMeasurement?.weightKg != null
+                        ? latestMeasurement.weightKg
+                        : "—"}
+                    </span>
+                    <span className="stat-unit">kg</span>
+                    <p className="stat-label">Weight</p>
+                  </div>
+                  <div className="stat-box">
+                    <span className="stat-value">
+                      {latestMeasurement?.heightCm != null
+                        ? latestMeasurement.heightCm
+                        : "—"}
+                    </span>
+                    <span className="stat-unit">cm</span>
+                    <p className="stat-label">Length</p>
+                  </div>
+                </div>
+                {latestMeasurement && (
+                  <p className="growth-measured-date">
+                    Weight as of {formatDate(latestMeasurement.measuredAt)}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className={`card countdown-card status-${status}`}>
             {status === "none" && (
@@ -389,6 +640,38 @@ export default function MilkTracker({
             </div>
           )}
 
+          <div className="fridge-ebm-card">
+            <p className="fridge-ebm-label">Total EBM in fridge</p>
+            <div className="fridge-ebm-controls">
+              <button
+                type="button"
+                className="fridge-ebm-btn"
+                disabled={fridgeUpdating || fridgeEbmCount <= 0}
+                onClick={() => adjustFridgeEbm(-FRIDGE_EBM_STEP)}
+                aria-label="Decrease fridge EBM"
+              >
+                −
+              </button>
+              <div className="fridge-ebm-value">
+                <span className="fridge-ebm-num">{fridgeEbmCount}</span>
+              </div>
+              <button
+                type="button"
+                className="fridge-ebm-btn"
+                disabled={fridgeUpdating}
+                onClick={() => adjustFridgeEbm(FRIDGE_EBM_STEP)}
+                aria-label="Increase fridge EBM"
+              >
+                +
+              </button>
+            </div>
+            {fridgeUpdatedAt != null && (
+              <p className="fridge-ebm-date">
+                Updated {formatDate(fridgeUpdatedAt)} · {formatTime(fridgeUpdatedAt)}
+              </p>
+            )}
+          </div>
+
           <div className="stats-row">
             <div className="stat-box">
               <span className="stat-value">{dailyOz.toFixed(1)}</span>
@@ -399,6 +682,21 @@ export default function MilkTracker({
               <span className="stat-value">{todayFeedings.length}</span>
               <p className="stat-label">Feedings</p>
             </div>
+            
+          </div>
+          <div className="stats-row stats-row-milk">
+            <div className="stat-box">
+              <span className="stat-value">{todayEbmOz.toFixed(1)}</span>
+              <span className="stat-unit">oz</span>
+              <p className="stat-label">EBM today</p>
+            </div>
+            <div className="stat-box">
+              <span className="stat-value">{todayFmOz.toFixed(1)}</span>
+              <span className="stat-unit">oz</span>
+              <p className="stat-label">FM today</p>
+            </div>
+          </div>
+          <div className="stats-row stats-row-secondary">
             <div className="stat-box">
               <span className="stat-value">
                 {lastFeeding ? formatTime(lastFeeding.timestamp) : "—"}
@@ -412,6 +710,8 @@ export default function MilkTracker({
               <p className="stat-label">Next feed</p>
             </div>
           </div>
+
+    
 
           <div className="card log-card">
             <h2 className="card-title">Berapa banyak Idris minum??</h2>

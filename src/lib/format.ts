@@ -47,3 +47,16 @@ export function todayTimeInputToTimestamp(hhmm: string): number {
   d.setHours(h, m, 0, 0)
   return d.getTime()
 }
+
+export function toDateInputValue(ts: number): string {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export function dateInputToTimestamp(yyyyMmDd: string): number {
+  const [y, m, d] = yyyyMmDd.split('-').map(Number)
+  const date = new Date()
+  date.setFullYear(y, m - 1, d)
+  date.setHours(12, 0, 0, 0)
+  return date.getTime()
+}

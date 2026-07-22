@@ -234,7 +234,7 @@ export default function PumpTracker({ session, family }: Props) {
       {(status === 'due' || status === 'overdue') && (
         <div className="prepare-banner pump-banner">
           <span className="prepare-icon">⏱️</span>
-          <span>Good time to pump — helps keep supply steady for Anaqi</span>
+          <span>Good time to pump — helps keep supply steady for Idris</span>
         </div>
       )}
 
