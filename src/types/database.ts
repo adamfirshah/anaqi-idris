@@ -107,3 +107,37 @@ export function rowToBabyMeasurement(row: BabyMeasurementRow): BabyMeasurement {
     heightCm: row.height_cm != null ? Number(row.height_cm) : null,
   }
 }
+
+export type PoopType = 'Poo' | 'Pee' | 'Both'
+
+export interface PoopLogRow {
+  id: string
+  family_id: string
+  logged_at: string
+  poop_type: PoopType
+  note: string | null
+  logged_by: string | null
+  created_at: string
+}
+
+export interface PoopLog {
+  id: string
+  timestamp: number
+  poopType: PoopType
+  note: string
+}
+
+export function rowToPoopLog(row: PoopLogRow): PoopLog {
+  return {
+    id: row.id,
+    timestamp: new Date(row.logged_at).getTime(),
+    poopType: row.poop_type,
+    note: row.note ?? '',
+  }
+}
+
+export function poopDisplayText(poopType: PoopType): string {
+  if (poopType === 'Pee') return 'Idris peed!'
+  if (poopType === 'Both') return 'Idris pooped & peed!'
+  return 'Idris pooped!'
+}

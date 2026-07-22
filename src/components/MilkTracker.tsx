@@ -4,6 +4,8 @@ import { supabase } from "../lib/supabase";
 import {
   formatTime,
   formatDate,
+  formatGrowthDate,
+  formatWeightKg,
   formatDatePill,
   todayStr,
   todayIsoDate,
@@ -11,6 +13,8 @@ import {
   formatElapsed,
   toTimeInputValue,
   todayTimeInputToTimestamp,
+  toDateInputValue,
+  dateInputToTimestamp,
 } from "../lib/format";
 import type {
   FamilyInfo,
@@ -19,8 +23,16 @@ import type {
   MilkType,
   BabyMeasurement,
   BabyMeasurementRow,
+  PoopLog,
+  PoopLogRow,
 } from "../types/database";
-import { rowToFeeding, feedingDisplayNote, rowToBabyMeasurement } from "../types/database";
+import {
+  rowToFeeding,
+  feedingDisplayNote,
+  rowToBabyMeasurement,
+  rowToPoopLog,
+  poopDisplayText,
+} from "../types/database";
 import { usePushNotifications } from "../hooks/usePushNotifications";
 import { showLocalNotification } from "../lib/push";
 import PumpTracker from "./PumpTracker";
@@ -143,11 +155,19 @@ function writeStoredAppetonLogs(familyId: string, logs: Record<string, number>) 
 
 type ActivityItem =
   | { kind: "feeding"; feeding: Feeding }
-  | { kind: "appeton"; timestamp: number };
+  | { kind: "appeton"; timestamp: number }
+  | { kind: "poop"; poop: PoopLog };
+
+function activityTimestamp(item: ActivityItem): number {
+  if (item.kind === "feeding") return item.feeding.timestamp;
+  if (item.kind === "poop") return item.poop.timestamp;
+  return item.timestamp;
+}
 
 function buildActivityList(
   feedings: Feeding[],
   appetonTs: number | null,
+  poops: PoopLog[],
 ): ActivityItem[] {
   const items: ActivityItem[] = feedings.map((feeding) => ({
     kind: "feeding",
@@ -156,11 +176,10 @@ function buildActivityList(
   if (appetonTs != null) {
     items.push({ kind: "appeton", timestamp: appetonTs });
   }
-  return items.sort((a, b) => {
-    const ta = a.kind === "feeding" ? a.feeding.timestamp : a.timestamp;
-    const tb = b.kind === "feeding" ? b.feeding.timestamp : b.timestamp;
-    return ta - tb;
-  });
+  for (const poop of poops) {
+    items.push({ kind: "poop", poop });
+  }
+  return items.sort((a, b) => activityTimestamp(a) - activityTimestamp(b));
 }
 
 interface Props {
@@ -191,8 +210,14 @@ export default function MilkTracker({
     toTimeInputValue(Date.now() - 30 * 60 * 1000),
   );
   const [error, setError] = useState("");
-  const [latestMeasurement, setLatestMeasurement] = useState<BabyMeasurement | null>(null);
+  const [growthHistory, setGrowthHistory] = useState<BabyMeasurement[]>([]);
   const [growthOpen, setGrowthOpen] = useState(false);
+  const [growthAddOpen, setGrowthAddOpen] = useState(false);
+  const [growthWeight, setGrowthWeight] = useState("");
+  const [growthHeight, setGrowthHeight] = useState("");
+  const [growthDate, setGrowthDate] = useState(() => toDateInputValue(Date.now()));
+  const [growthSaving, setGrowthSaving] = useState(false);
+  const latestMeasurement = growthHistory[0] ?? null;
   const storedFridge = readStoredFridge(family.familyId);
   const [fridgeEbmCount, setFridgeEbmCount] = useState(storedFridge.count);
   const [fridgeUpdatedAt, setFridgeUpdatedAt] = useState<number | null>(
@@ -207,6 +232,13 @@ export default function MilkTracker({
   );
   const [appetonSaving, setAppetonSaving] = useState(false);
   const appetonDoneToday = appetonLogs[todayStr()] != null;
+  const [poopLogs, setPoopLogs] = useState<PoopLog[]>([]);
+  const [poopOpen, setPoopOpen] = useState(false);
+  const [poopForgotOpen, setPoopForgotOpen] = useState(false);
+  const [poopForgotTime, setPoopForgotTime] = useState(() =>
+    toTimeInputValue(Date.now() - 30 * 60 * 1000),
+  );
+  const [justLoggedPoop, setJustLoggedPoop] = useState(false);
   const { notiStatus, notiError, iosHint, enableNotifications } = usePushNotifications(
     session.user.id,
   );
@@ -234,9 +266,7 @@ export default function MilkTracker({
     const { data, error: fetchError } = await supabase
       .from("baby_measurements")
       .select("*")
-      .order("measured_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .order("measured_at", { ascending: false });
 
     if (fetchError) {
       if (!isMissingTableError(fetchError.message)) {
@@ -245,10 +275,60 @@ export default function MilkTracker({
       return;
     }
 
-    setLatestMeasurement(
-      data ? rowToBabyMeasurement(data as BabyMeasurementRow) : null,
+    setGrowthHistory(
+      (data as BabyMeasurementRow[] | null)?.map(rowToBabyMeasurement) ?? [],
     );
   }, []);
+
+  const openGrowthAdd = useCallback(() => {
+    const latest = growthHistory[0];
+    setGrowthWeight(latest?.weightKg != null ? String(latest.weightKg) : "");
+    setGrowthHeight(latest?.heightCm != null ? String(latest.heightCm) : "");
+    setGrowthDate(toDateInputValue(Date.now()));
+    setGrowthAddOpen(true);
+  }, [growthHistory]);
+
+  const addGrowthMeasurement = useCallback(async () => {
+    const w = parseFloat(growthWeight);
+    const h = parseFloat(growthHeight);
+    if (!w || w <= 0 || w > 30 || !h || h <= 0 || h > 200) return;
+
+    setGrowthSaving(true);
+    setError("");
+
+    const { error: insertError } = await supabase.from("baby_measurements").insert({
+      family_id: family.familyId,
+      weight_kg: w,
+      height_cm: h,
+      measured_at: new Date(dateInputToTimestamp(growthDate)).toISOString(),
+      logged_by: session.user.id,
+    });
+
+    setGrowthSaving(false);
+
+    if (insertError) {
+      if (!isMissingTableError(insertError.message)) {
+        setError(insertError.message);
+      }
+      return;
+    }
+
+    setGrowthAddOpen(false);
+    fetchGrowth();
+  }, [
+    growthWeight,
+    growthHeight,
+    growthDate,
+    family.familyId,
+    session.user.id,
+    fetchGrowth,
+  ]);
+
+  const growthFormValid =
+    parseFloat(growthWeight) > 0 &&
+    parseFloat(growthWeight) <= 30 &&
+    parseFloat(growthHeight) > 0 &&
+    parseFloat(growthHeight) <= 200;
 
   const fetchFridgeEbm = useCallback(async () => {
     if (fridgeUpdatingRef.current) return;
@@ -378,11 +458,28 @@ export default function MilkTracker({
     setLoading(false);
   }, []);
 
+  const fetchPoopLogs = useCallback(async () => {
+    const { data, error: fetchError } = await supabase
+      .from("poop_logs")
+      .select("*")
+      .order("logged_at", { ascending: true });
+
+    if (fetchError) {
+      if (!isMissingTableError(fetchError.message)) {
+        setError(fetchError.message);
+      }
+      return;
+    }
+
+    setPoopLogs((data as PoopLogRow[] | null)?.map(rowToPoopLog) ?? []);
+  }, []);
+
   useEffect(() => {
     fetchFeedings();
     fetchGrowth();
     fetchFridgeEbm();
     fetchAppeton();
+    fetchPoopLogs();
 
     const feedingsChannel = supabase
       .channel("feedings-changes")
@@ -420,13 +517,23 @@ export default function MilkTracker({
       )
       .subscribe();
 
+    const poopChannel = supabase
+      .channel("poop-logs-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "poop_logs" },
+        () => fetchPoopLogs(),
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(feedingsChannel);
       supabase.removeChannel(growthChannel);
       supabase.removeChannel(fridgeChannel);
       supabase.removeChannel(appetonChannel);
+      supabase.removeChannel(poopChannel);
     };
-  }, [fetchFeedings, fetchGrowth, fetchFridgeEbm, fetchAppeton]);
+  }, [fetchFeedings, fetchGrowth, fetchFridgeEbm, fetchAppeton, fetchPoopLogs]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -461,13 +568,16 @@ export default function MilkTracker({
     (acc[k] ??= []).push(f);
     return acc;
   }, {});
-  const pastDates = Object.keys(grouped).sort(
-    (a, b) => new Date(b).getTime() - new Date(a).getTime(),
-  );
 
-  const allDateKeys = [...new Set(feedings.map((f) => new Date(f.timestamp).toDateString()))].sort(
-    (a, b) => new Date(b).getTime() - new Date(a).getTime(),
-  );
+  const allDateKeys = [
+    ...new Set([
+      ...feedings.map((f) => new Date(f.timestamp).toDateString()),
+      ...poopLogs.map((p) => new Date(p.timestamp).toDateString()),
+      ...Object.keys(appetonLogs),
+    ]),
+  ].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+  const pastDates = allDateKeys.filter((k) => k !== todayStr());
 
   const historyDateKeys =
     activeTab === "today" ? [todayStr()] : allDateKeys.filter((k) => k !== todayStr());
@@ -477,12 +587,16 @@ export default function MilkTracker({
   const selectedFeedings = feedings.filter(
     (f) => new Date(f.timestamp).toDateString() === selectedDateKey,
   );
+  const selectedPoops = poopLogs.filter(
+    (p) => new Date(p.timestamp).toDateString() === selectedDateKey,
+  );
   const selectedTotal = selectedFeedings.reduce((s, f) => s + f.oz, 0);
   const selectedMilk = dayMilkTotals(selectedFeedings);
   const selectedAppetonTs = appetonLogs[selectedDateKey] ?? null;
   const selectedActivity = buildActivityList(
     selectedFeedings,
     selectedAppetonTs,
+    selectedPoops,
   );
   const hasSelectedActivity = selectedActivity.length > 0;
 
@@ -534,6 +648,52 @@ export default function MilkTracker({
     [fetchFeedings],
   );
 
+  const logPoop = useCallback(
+    async (loggedAtTs: number) => {
+      setError("");
+      const { error: insertError } = await supabase.from("poop_logs").insert({
+        family_id: family.familyId,
+        logged_at: new Date(loggedAtTs).toISOString(),
+        poop_type: "Poo",
+        logged_by: session.user.id,
+      });
+
+      if (insertError) {
+        if (!isMissingTableError(insertError.message)) {
+          setError(insertError.message);
+        }
+        return;
+      }
+
+      setPoopForgotOpen(false);
+      setJustLoggedPoop(true);
+      setTimeout(() => setJustLoggedPoop(false), 2000);
+      fetchPoopLogs();
+
+      await showLocalNotification(
+        "💩 Poop logged",
+        `${poopDisplayText("Poo")} at ${formatTime(loggedAtTs)}`,
+        "anaqi-poop-logged",
+      );
+    },
+    [family.familyId, session.user.id, fetchPoopLogs],
+  );
+
+  const removePoop = useCallback(
+    async (id: string) => {
+      const { error: deleteError } = await supabase
+        .from("poop_logs")
+        .delete()
+        .eq("id", id);
+      if (deleteError && !isMissingTableError(deleteError.message)) {
+        setError(deleteError.message);
+      } else {
+        fetchPoopLogs();
+      }
+    },
+    [fetchPoopLogs],
+  );
+
   const adjustFridgeEbm = useCallback(
     async (delta: number) => {
       const prev = fridgeEbmRef.current;
@@ -574,6 +734,16 @@ export default function MilkTracker({
   const forgotValid =
     forgotTs <= Date.now() &&
     (!lastFeeding || forgotTs > lastFeeding.timestamp);
+
+  const todayPoops = poopLogs.filter(
+    (p) => new Date(p.timestamp).toDateString() === todayStr(),
+  );
+  const lastPoop =
+    todayPoops.length > 0 ? todayPoops[todayPoops.length - 1] : null;
+  const poopForgotTs = todayTimeInputToTimestamp(poopForgotTime);
+  const poopForgotValid =
+    poopForgotTs <= Date.now() &&
+    (!lastPoop || poopForgotTs > lastPoop.timestamp);
 
   if (loading) {
     return (
@@ -673,48 +843,146 @@ export default function MilkTracker({
               aria-expanded={growthOpen}
             >
               <span className="growth-collapse-title">Growth</span>
-              <span className="growth-collapse-summary">
-                {latestMeasurement?.weightKg != null ? (
-                  <>
-                    {latestMeasurement.weightKg} kg
-                    <span className="growth-collapse-date">
-                      · {formatDate(latestMeasurement.measuredAt)}
-                    </span>
-                  </>
-                ) : (
-                  "No data yet"
-                )}
-              </span>
+              {latestMeasurement ? (
+                <>
+                  <span className="growth-collapse-metrics">
+                    {formatWeightKg(latestMeasurement.weightKg)} kg ·{" "}
+                    {latestMeasurement.heightCm ?? "—"} cm
+                  </span>
+                  <span className="growth-collapse-date">
+                    {formatGrowthDate(latestMeasurement.measuredAt)}
+                  </span>
+                </>
+              ) : (
+                <span className="growth-collapse-summary">No data yet</span>
+              )}
               <span className="growth-collapse-chevron" aria-hidden>
                 {growthOpen ? "▾" : "▸"}
               </span>
             </button>
             {growthOpen && (
               <div className="growth-collapse-body">
-                <div className="growth-collapse-stats">
-                  <div className="stat-box">
-                    <span className="stat-value">
-                      {latestMeasurement?.weightKg != null
-                        ? latestMeasurement.weightKg
-                        : "—"}
-                    </span>
-                    <span className="stat-unit">kg</span>
-                    <p className="stat-label">Weight</p>
+                {latestMeasurement ? (
+                  <>
+                    <div className="growth-latest-banner">
+                      <p className="growth-latest-label">Latest</p>
+                      <p className="growth-latest-date">
+                        {formatGrowthDate(latestMeasurement.measuredAt)}
+                      </p>
+                    </div>
+                    <div className="growth-collapse-stats">
+                      <div className="stat-box">
+                        <span className="stat-value">
+                          {formatWeightKg(latestMeasurement.weightKg)}
+                        </span>
+                        <span className="stat-unit">kg</span>
+                        <p className="stat-label">Weight</p>
+                      </div>
+                      <div className="stat-box">
+                        <span className="stat-value">
+                          {latestMeasurement.heightCm ?? "—"}
+                        </span>
+                        <span className="stat-unit">cm</span>
+                        <p className="stat-label">Height</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="empty-state">No growth data yet.</p>
+                )}
+
+                {growthHistory.length > 0 && (
+                  <div className="growth-history">
+                    <p className="growth-history-label">History</p>
+                    <ul className="growth-history-list">
+                      {growthHistory.map((m, i) => (
+                        <li
+                          key={m.id}
+                          className={`growth-history-item ${i === 0 ? "latest" : ""}`}
+                        >
+                          <span className="growth-history-values">
+                            {formatWeightKg(m.weightKg)} kg · {m.heightCm ?? "—"} cm
+                          </span>
+                          <span className="growth-history-date">
+                            {formatGrowthDate(m.measuredAt)}
+                          </span>
+                          {i === 0 && (
+                            <span className="growth-history-badge">Latest</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  <div className="stat-box">
-                    <span className="stat-value">
-                      {latestMeasurement?.heightCm != null
-                        ? latestMeasurement.heightCm
-                        : "—"}
-                    </span>
-                    <span className="stat-unit">cm</span>
-                    <p className="stat-label">Length</p>
+                )}
+
+                {growthAddOpen ? (
+                  <div className="growth-add-form">
+                    <p className="section-label">Weight (kg)</p>
+                    <div className="custom-row">
+                      <input
+                        type="number"
+                        className="oz-input"
+                        value={growthWeight}
+                        onChange={(e) => setGrowthWeight(e.target.value)}
+                        min="0.1"
+                        max="30"
+                        step="0.01"
+                        inputMode="decimal"
+                        placeholder="5.02"
+                        aria-label="Weight in kg"
+                      />
+                      <span className="oz-unit">kg</span>
+                    </div>
+                    <p className="section-label">Height (cm)</p>
+                    <div className="custom-row">
+                      <input
+                        type="number"
+                        className="oz-input"
+                        value={growthHeight}
+                        onChange={(e) => setGrowthHeight(e.target.value)}
+                        min="1"
+                        max="200"
+                        step="0.1"
+                        inputMode="decimal"
+                        placeholder="60"
+                        aria-label="Height in cm"
+                      />
+                      <span className="oz-unit">cm</span>
+                    </div>
+                    <p className="section-label">Measured on</p>
+                    <input
+                      type="date"
+                      className="growth-date-input"
+                      value={growthDate}
+                      onChange={(e) => setGrowthDate(e.target.value)}
+                      aria-label="Measurement date"
+                    />
+                    <div className="growth-add-actions">
+                      <button
+                        type="button"
+                        className="growth-add-cancel"
+                        onClick={() => setGrowthAddOpen(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="growth-add-save"
+                        disabled={!growthFormValid || growthSaving}
+                        onClick={addGrowthMeasurement}
+                      >
+                        {growthSaving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
                   </div>
-                </div>
-                {latestMeasurement && (
-                  <p className="growth-measured-date">
-                    Weight as of {formatDate(latestMeasurement.measuredAt)}
-                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    className="growth-add-btn"
+                    onClick={openGrowthAdd}
+                  >
+                    + Add weight & height
+                  </button>
                 )}
               </div>
             )}
@@ -874,13 +1142,13 @@ export default function MilkTracker({
             </div>
           </div>
           <div className="stats-row stats-row-secondary">
-            <div className="stat-box">
+            <div className="stat-box stat-box-highlight">
               <span className="stat-value">
                 {lastFeeding ? formatTime(lastFeeding.timestamp) : "—"}
               </span>
               <p className="stat-label">Last fed</p>
             </div>
-            <div className="stat-box">
+            <div className="stat-box stat-box-highlight">
               <span className="stat-value">
                 {nextFeedTs ? formatTime(nextFeedTs) : "—"}
               </span>
@@ -973,6 +1241,7 @@ export default function MilkTracker({
             <button
               type="button"
               className={`log-btn ${justLogged ? "logged" : ""}`}
+              disabled={forgotOpen}
               onClick={() => logFeeding(Date.now())}
             >
               {justLogged ? "✓ Logged!" : "🍼 Log Feed Now"}
@@ -1045,6 +1314,93 @@ export default function MilkTracker({
             )}
           </div>
 
+          <div className={`growth-collapse poop-collapse ${poopOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="growth-collapse-toggle"
+              onClick={() => setPoopOpen((open) => !open)}
+              aria-expanded={poopOpen}
+            >
+              <span className="growth-collapse-title">💩 Poop</span>
+              {lastPoop ? (
+                <>
+                  <span className="growth-collapse-metrics">
+                    {todayPoops.length} today · {formatTime(lastPoop.timestamp)}
+                  </span>
+                </>
+              ) : (
+                <span className="growth-collapse-summary">No poops today</span>
+              )}
+              <span className="growth-collapse-chevron" aria-hidden>
+                {poopOpen ? "▾" : "▸"}
+              </span>
+            </button>
+            {poopOpen && (
+              <div className="growth-collapse-body poop-collapse-body">
+                <button
+                  type="button"
+                  className={`log-btn poop-log-btn ${justLoggedPoop ? "logged" : ""}`}
+                  disabled={poopForgotOpen}
+                  onClick={() => logPoop(Date.now())}
+                >
+                  {justLoggedPoop ? "✓ Logged!" : "💩 Log Poop Now"}
+                </button>
+
+                <button
+                  type="button"
+                  className="forgot-toggle"
+                  onClick={() => setPoopForgotOpen((open) => !open)}
+                >
+                  {poopForgotOpen ? "Hide" : "Forgot to log?"}
+                </button>
+
+                {poopForgotOpen && (
+                  <div className="forgot-panel">
+                    <p className="section-label">When did he go?</p>
+                    <div className="oz-row">
+                      {FORGOT_AGO_MIN.map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          className="oz-btn forgot-ago-btn"
+                          onClick={() =>
+                            setPoopForgotTime(
+                              toTimeInputValue(Date.now() - m * 60 * 1000),
+                            )
+                          }
+                        >
+                          {m}m ago
+                        </button>
+                      ))}
+                    </div>
+                    <div className="custom-row">
+                      <input
+                        type="time"
+                        className="oz-input forgot-time-input"
+                        value={poopForgotTime}
+                        onChange={(e) => setPoopForgotTime(e.target.value)}
+                        aria-label="Poop time"
+                      />
+                    </div>
+                    {!poopForgotValid && lastPoop && (
+                      <p className="forgot-error">
+                        Ambil masa lepas {formatTime(lastPoop.timestamp)} and not before
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      className="log-btn log-btn-missed poop-log-btn"
+                      disabled={!poopForgotValid}
+                      onClick={() => logPoop(poopForgotTs)}
+                    >
+                      Log poop at {formatTime(poopForgotTs)}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="tabs">
             <button
               type="button"
@@ -1077,7 +1433,7 @@ export default function MilkTracker({
 
           <div className="card history-card">
             {activeTab === "history" && pastDates.length === 0 ? (
-              <p className="empty-state">No past feedings recorded.</p>
+              <p className="empty-state">No past activity recorded.</p>
             ) : (
               <>
                 {activeTab === "history" && visibleDateKeys.length > 0 && (
@@ -1109,8 +1465,8 @@ export default function MilkTracker({
                 {!hasSelectedActivity ? (
                   <p className="empty-state">
                     {activeTab === "today"
-                      ? "No feedings logged today yet."
-                      : "No feedings on this day."}
+                      ? "No activity logged today yet."
+                      : "No activity on this day."}
                   </p>
                 ) : (
                   <>
@@ -1120,12 +1476,19 @@ export default function MilkTracker({
                           {formatDate(
                             selectedFeedings[0]?.timestamp ??
                               selectedAppetonTs ??
+                              selectedPoops[0]?.timestamp ??
                               Date.now(),
                           )}
                         </span>
                         <span className="day-hero-count">
-                          {selectedFeedings.length} feeding
-                          {selectedFeedings.length !== 1 ? "s" : ""}
+                          {[
+                            selectedFeedings.length > 0 &&
+                              `${selectedFeedings.length} feeding${selectedFeedings.length !== 1 ? "s" : ""}`,
+                            selectedPoops.length > 0 &&
+                              `${selectedPoops.length} poop${selectedPoops.length !== 1 ? "s" : ""}`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </span>
                       </div>
                       <div className="day-hero-oz">
@@ -1151,9 +1514,23 @@ export default function MilkTracker({
 
                     <ul className="feeding-list feed-list-v2">
                       {[...selectedActivity].reverse().map((item, i, arr) => {
+                        const prevItem = arr[i + 1];
+                        const prevTs = prevItem ? activityTimestamp(prevItem) : null;
+                        const ts = activityTimestamp(item);
+                        const gap = prevTs ? ts - prevTs : null;
+                        const gapEl =
+                          gap && activeTab === "today" ? (
+                            <div className="feeding-gap">
+                              {formatCountdown(gap).h > 0
+                                ? `${formatCountdown(gap).h}h ${formatCountdown(gap).m}m gap`
+                                : `${formatCountdown(gap).m}m gap`}
+                            </div>
+                          ) : null;
+
                         if (item.kind === "appeton") {
                           return (
                             <li key="appeton" className="feeding-item">
+                              {gapEl}
                               <div className="activity-log-row">
                                 <span className="activity-log-icon">💊</span>
                                 <div className="activity-log-meta">
@@ -1177,25 +1554,39 @@ export default function MilkTracker({
                           );
                         }
 
+                        if (item.kind === "poop") {
+                          const p = item.poop;
+                          return (
+                            <li key={p.id} className="feeding-item">
+                              {gapEl}
+                              <div className="activity-log-row activity-poop-row">
+                                <span className="activity-log-icon">💩</span>
+                                <div className="activity-log-meta">
+                                  <span className="activity-log-text">
+                                    {poopDisplayText(p.poopType)}
+                                  </span>
+                                  <span className="feed-time">
+                                    {formatTime(p.timestamp)}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="remove-btn"
+                                  onClick={() => removePoop(p.id)}
+                                  aria-label="Remove poop log"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        }
+
                         const f = item.feeding;
-                        const prevItem = arr[i + 1];
-                        const prevTs =
-                          prevItem?.kind === "feeding"
-                            ? prevItem.feeding.timestamp
-                            : prevItem?.kind === "appeton"
-                              ? prevItem.timestamp
-                              : null;
-                        const gap = prevTs ? f.timestamp - prevTs : null;
                         const displayNote = feedingDisplayNote(f);
                         return (
                           <li key={f.id} className="feeding-item">
-                            {gap && activeTab === "today" && (
-                              <div className="feeding-gap">
-                                {formatCountdown(gap).h > 0
-                                  ? `${formatCountdown(gap).h}h ${formatCountdown(gap).m}m gap`
-                                  : `${formatCountdown(gap).m}m gap`}
-                              </div>
-                            )}
+                            {gapEl}
                             <div className="feed-row">
                               <div className="feed-oz-block">
                                 <span className="feed-oz-num">{f.oz}</span>

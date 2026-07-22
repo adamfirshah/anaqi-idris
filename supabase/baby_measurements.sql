@@ -51,6 +51,6 @@ create policy "Family members can delete baby measurements"
 
 alter publication supabase_realtime add table public.baby_measurements;
 
--- Optional: seed Anaqi's latest stats (edit weight/height, run once)
--- insert into public.baby_measurements (family_id, weight_kg, height_cm)
--- select id, 3.5, 52.0 from public.families limit 1;
+-- Optional: seed Idris's latest stats (run once)
+-- insert into public.baby_measurements (family_id, weight_kg, height_cm, measured_at)
+-- select id, 5.02, 60, '2026-07-17'::timestamptz from public.families limit 1;

@@ -10,6 +10,19 @@ export function formatDate(ts: number) {
   })
 }
 
+export function formatGrowthDate(ts: number) {
+  return new Date(ts).toLocaleDateString('en-MY', {
+    day: 'numeric',
+    month: 'numeric',
+    year: 'numeric',
+  })
+}
+
+export function formatWeightKg(kg: number | null) {
+  if (kg == null) return '—'
+  return kg.toFixed(2)
+}
+
 export function formatDatePill(dateKey: string) {
   const d = new Date(dateKey)
   if (dateKey === todayStr()) return 'Today'
