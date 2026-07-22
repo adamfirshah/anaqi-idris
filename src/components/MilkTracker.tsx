@@ -25,6 +25,8 @@ import type {
   MilkType,
   BabyMeasurement,
   BabyMeasurementRow,
+  BabyAppointment,
+  BabyAppointmentRow,
   PoopLog,
   PoopLogRow,
   DirectFeedLog,
@@ -34,6 +36,7 @@ import {
   rowToFeeding,
   feedingDisplayNote,
   rowToBabyMeasurement,
+  rowToBabyAppointment,
   rowToPoopLog,
   poopDisplayText,
   rowToDirectFeedLog,
@@ -50,6 +53,7 @@ const QUICK_OZ = [2, 2.5, 3, 3.5, 4];
 const MILK_TYPES = ["FM", "EBM"] as const;
 const FORGOT_AGO_MIN = [15, 30, 45, 60] as const;
 const FRIDGE_EBM_STEP = 1;
+const APPOINTMENT_LOCATIONS = ["Dr. Kent Avisena", "KK Cyberjaya"] as const;
 
 type Status = "none" | "ok" | "prepare" | "overdue";
 
@@ -202,6 +206,53 @@ function mergeDirectFeeds(
   return next;
 }
 
+function appointmentStorageKey(familyId: string) {
+  return `baby-appointments-${familyId}`;
+}
+
+function readStoredAppointments(familyId: string): BabyAppointment[] {
+  try {
+    const raw = localStorage.getItem(appointmentStorageKey(familyId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as BabyAppointment[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.appointmentAt === "number" &&
+        typeof item.location === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredAppointments(familyId: string, items: BabyAppointment[]) {
+  try {
+    localStorage.setItem(appointmentStorageKey(familyId), JSON.stringify(items));
+  } catch {
+    /* ignore */
+  }
+}
+
+function mergeAppointments(
+  familyId: string,
+  ...sources: BabyAppointment[][]
+): BabyAppointment[] {
+  const merged = new Map<string, BabyAppointment>();
+  for (const source of sources) {
+    for (const item of source) {
+      merged.set(item.id, item);
+    }
+  }
+  const next = [...merged.values()].sort(
+    (a, b) => a.appointmentAt - b.appointmentAt,
+  );
+  writeStoredAppointments(familyId, next);
+  return next;
+}
+
 type ActivityItem =
   | { kind: "feeding"; feeding: Feeding }
   | { kind: "appeton"; timestamp: number }
@@ -273,6 +324,17 @@ export default function MilkTracker({
   const [growthDate, setGrowthDate] = useState(() => toDateInputValue(Date.now()));
   const [growthSaving, setGrowthSaving] = useState(false);
   const latestMeasurement = growthHistory[0] ?? null;
+  const [appointments, setAppointments] = useState<BabyAppointment[]>(() =>
+    readStoredAppointments(family.familyId),
+  );
+  const [appointmentsOpen, setAppointmentsOpen] = useState(false);
+  const [appointmentAddOpen, setAppointmentAddOpen] = useState(false);
+  const [appointmentDate, setAppointmentDate] = useState(() =>
+    toDateInputValue(Date.now()),
+  );
+  const [appointmentLocation, setAppointmentLocation] = useState("");
+  const [appointmentNote, setAppointmentNote] = useState("");
+  const [appointmentSaving, setAppointmentSaving] = useState(false);
   const storedFridge = readStoredFridge(family.familyId);
   const [fridgeEbmCount, setFridgeEbmCount] = useState(storedFridge.count);
   const [fridgeUpdatedAt, setFridgeUpdatedAt] = useState<number | null>(
@@ -388,6 +450,119 @@ export default function MilkTracker({
     parseFloat(growthWeight) <= 30 &&
     parseFloat(growthHeight) > 0 &&
     parseFloat(growthHeight) <= 200;
+
+  const fetchAppointments = useCallback(async () => {
+    const stored = readStoredAppointments(family.familyId);
+    const { data, error: fetchError } = await supabase
+      .from("baby_appointments")
+      .select("*")
+      .order("appointment_at", { ascending: true });
+
+    if (fetchError) {
+      if (!isMissingTableError(fetchError.message)) {
+        setError(fetchError.message);
+      }
+      setAppointments(stored);
+      return;
+    }
+
+    const fromDb =
+      (data as BabyAppointmentRow[] | null)?.map(rowToBabyAppointment) ?? [];
+    setAppointments(mergeAppointments(family.familyId, stored, fromDb));
+  }, [family.familyId]);
+
+  const openAppointmentAdd = useCallback(() => {
+    setAppointmentDate(toDateInputValue(Date.now()));
+    setAppointmentLocation("");
+    setAppointmentNote("");
+    setAppointmentAddOpen(true);
+  }, []);
+
+  const addAppointment = useCallback(async () => {
+    const location = appointmentLocation.trim();
+    if (!location) return;
+
+    const tempId = crypto.randomUUID();
+    const optimistic: BabyAppointment = {
+      id: tempId,
+      appointmentAt: dateInputToTimestamp(appointmentDate),
+      location,
+      note: appointmentNote.trim(),
+    };
+
+    setAppointmentSaving(true);
+    setError("");
+    setAppointments((prev) =>
+      mergeAppointments(family.familyId, prev, [optimistic]),
+    );
+
+    const { data, error: insertError } = await supabase
+      .from("baby_appointments")
+      .insert({
+        family_id: family.familyId,
+        appointment_at: new Date(optimistic.appointmentAt).toISOString(),
+        location,
+        note: appointmentNote.trim() || null,
+        logged_by: session.user.id,
+      })
+      .select()
+      .single();
+
+    setAppointmentSaving(false);
+
+    if (insertError) {
+      if (isMissingTableError(insertError.message)) {
+        setAppointmentAddOpen(false);
+        return;
+      }
+      setAppointments((prev) => {
+        const next = prev.filter((a) => a.id !== tempId);
+        writeStoredAppointments(family.familyId, next);
+        return next;
+      });
+      setError(insertError.message);
+      return;
+    }
+
+    const saved = rowToBabyAppointment(data as BabyAppointmentRow);
+    setAppointments((prev) => {
+      const withoutTemp = prev.filter((a) => a.id !== tempId);
+      return mergeAppointments(family.familyId, withoutTemp, [saved]);
+    });
+    setAppointmentAddOpen(false);
+  }, [
+    appointmentDate,
+    appointmentLocation,
+    appointmentNote,
+    family.familyId,
+    session.user.id,
+  ]);
+
+  const removeAppointment = useCallback(
+    async (id: string) => {
+      const snapshot = appointments;
+      setAppointments((prev) => {
+        const next = prev.filter((a) => a.id !== id);
+        writeStoredAppointments(family.familyId, next);
+        return next;
+      });
+      setError("");
+
+      const { error: deleteError } = await supabase
+        .from("baby_appointments")
+        .delete()
+        .eq("id", id);
+
+      if (deleteError && !isMissingTableError(deleteError.message)) {
+        setAppointments(snapshot);
+        writeStoredAppointments(family.familyId, snapshot);
+        setError(deleteError.message);
+      }
+    },
+    [appointments, family.familyId],
+  );
+
+  const appointmentFormValid = appointmentLocation.trim().length > 0;
 
   const fetchFridgeEbm = useCallback(async () => {
     if (fridgeUpdatingRef.current) return;
@@ -560,6 +735,7 @@ export default function MilkTracker({
     fetchAppeton();
     fetchPoopLogs();
     fetchDirectFeeds();
+    fetchAppointments();
 
     const feedingsChannel = supabase
       .channel("feedings-changes")
@@ -615,6 +791,15 @@ export default function MilkTracker({
       )
       .subscribe();
 
+    const appointmentsChannel = supabase
+      .channel("baby-appointments-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "baby_appointments" },
+        () => fetchAppointments(),
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(feedingsChannel);
       supabase.removeChannel(growthChannel);
@@ -622,8 +807,17 @@ export default function MilkTracker({
       supabase.removeChannel(appetonChannel);
       supabase.removeChannel(poopChannel);
       supabase.removeChannel(directFeedChannel);
+      supabase.removeChannel(appointmentsChannel);
     };
-  }, [fetchFeedings, fetchGrowth, fetchFridgeEbm, fetchAppeton, fetchPoopLogs, fetchDirectFeeds]);
+  }, [
+    fetchFeedings,
+    fetchGrowth,
+    fetchFridgeEbm,
+    fetchAppeton,
+    fetchPoopLogs,
+    fetchDirectFeeds,
+    fetchAppointments,
+  ]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -668,6 +862,13 @@ export default function MilkTracker({
     todayPoopsCount +
     todayDirectFeeds.length +
     (appetonLogs[todayStr()] != null ? 1 : 0);
+
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const nextAppointment =
+    appointments
+      .filter((a) => a.appointmentAt >= startOfToday.getTime())
+      .sort((a, b) => a.appointmentAt - b.appointmentAt)[0] ?? null;
 
   const pastFeedings = feedings.filter(
     (f) => new Date(f.timestamp).toDateString() !== todayStr(),
@@ -1176,6 +1377,149 @@ export default function MilkTracker({
                     onClick={openGrowthAdd}
                   >
                     + Add weight & height
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className={`growth-collapse ${appointmentsOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="growth-collapse-toggle"
+              onClick={() => setAppointmentsOpen((open) => !open)}
+              aria-expanded={appointmentsOpen}
+            >
+              <span className="growth-collapse-title">Appointment</span>
+              {nextAppointment ? (
+                <>
+                  <span className="growth-collapse-metrics">
+                    {formatGrowthDate(nextAppointment.appointmentAt)} ·{" "}
+                    {nextAppointment.location}
+                  </span>
+                </>
+              ) : (
+                <span className="growth-collapse-summary">No upcoming</span>
+              )}
+              <span className="growth-collapse-chevron" aria-hidden>
+                {appointmentsOpen ? "▾" : "▸"}
+              </span>
+            </button>
+            {appointmentsOpen && (
+              <div className="growth-collapse-body">
+                {nextAppointment && (
+                  <div className="growth-latest-banner">
+                    <p className="growth-latest-label">Next</p>
+                    <p className="growth-latest-date">
+                      {formatGrowthDate(nextAppointment.appointmentAt)} ·{" "}
+                      {nextAppointment.location}
+                    </p>
+                    {nextAppointment.note && (
+                      <p className="appointment-note">{nextAppointment.note}</p>
+                    )}
+                  </div>
+                )}
+
+                {appointments.length > 0 ? (
+                  <div className="growth-history">
+                    <p className="growth-history-label">All appointments</p>
+                    <ul className="growth-history-list">
+                      {appointments.map((a) => (
+                        <li key={a.id} className="growth-history-item">
+                          <div className="appointment-item-content">
+                            <span className="growth-history-values">
+                              {formatGrowthDate(a.appointmentAt)}
+                            </span>
+                            <span className="appointment-location">{a.location}</span>
+                            {a.note && (
+                              <span className="appointment-note">{a.note}</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="remove-btn"
+                            onClick={() => removeAppointment(a.id)}
+                            aria-label="Remove appointment"
+                          >
+                            ×
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="empty-state">No appointments yet.</p>
+                )}
+
+                {appointmentAddOpen ? (
+                  <div className="growth-add-form">
+                    <p className="section-label">When</p>
+                    <input
+                      type="date"
+                      className="growth-date-input"
+                      value={appointmentDate}
+                      onChange={(e) => setAppointmentDate(e.target.value)}
+                      aria-label="Appointment date"
+                    />
+                    <p className="section-label">Where</p>
+                    <div className="milk-type-row">
+                      {APPOINTMENT_LOCATIONS.map((loc) => (
+                        <button
+                          key={loc}
+                          type="button"
+                          className={`milk-btn ${appointmentLocation === loc ? "active" : ""}`}
+                          onClick={() =>
+                            setAppointmentLocation((prev) =>
+                              prev === loc ? "" : loc,
+                            )
+                          }
+                        >
+                          {loc}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      type="text"
+                      className="note-input"
+                      value={appointmentLocation}
+                      onChange={(e) => setAppointmentLocation(e.target.value)}
+                      placeholder="or type another place"
+                      maxLength={120}
+                    />
+                    <p className="section-label">Remark</p>
+                    <input
+                      type="text"
+                      className="note-input"
+                      value={appointmentNote}
+                      onChange={(e) => setAppointmentNote(e.target.value)}
+                      placeholder="optional"
+                      maxLength={120}
+                    />
+                    <div className="growth-add-actions">
+                      <button
+                        type="button"
+                        className="growth-add-cancel"
+                        onClick={() => setAppointmentAddOpen(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="growth-add-save"
+                        disabled={!appointmentFormValid || appointmentSaving}
+                        onClick={addAppointment}
+                      >
+                        {appointmentSaving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="growth-add-btn"
+                    onClick={openAppointmentAdd}
+                  >
+                    + Add appointment
                   </button>
                 )}
               </div>

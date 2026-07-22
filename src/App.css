@@ -480,6 +480,27 @@
   cursor: not-allowed;
 }
 
+.appointment-location {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #475569;
+  margin-top: 0.1rem;
+}
+.appointment-note {
+  display: block;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  margin-top: 0.15rem;
+}
+.appointment-item-content {
+  flex: 1;
+  min-width: 0;
+}
+.growth-history-item .remove-btn {
+  flex-shrink: 0;
+}
+
 .growth-measured-date {
   margin: 0.75rem 0 0;
   text-align: center;

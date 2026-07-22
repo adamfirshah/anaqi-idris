@@ -161,3 +161,29 @@ export function rowToDirectFeedLog(row: DirectFeedLogRow): DirectFeedLog {
     timestamp: new Date(row.logged_at).getTime(),
   }
 }
+
+export interface BabyAppointmentRow {
+  id: string
+  family_id: string
+  appointment_at: string
+  location: string
+  note: string | null
+  logged_by: string | null
+  created_at: string
+}
+
+export interface BabyAppointment {
+  id: string
+  appointmentAt: number
+  location: string
+  note: string
+}
+
+export function rowToBabyAppointment(row: BabyAppointmentRow): BabyAppointment {
+  return {
+    id: row.id,
+    appointmentAt: new Date(row.appointment_at).getTime(),
+    location: row.location,
+    note: row.note ?? '',
+  }
+}
