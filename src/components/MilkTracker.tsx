@@ -43,6 +43,18 @@ function getStatus(lastTs: number | null, now: number): Status {
   return "ok";
 }
 
+function dayMilkTotals(items: Feeding[]) {
+  return items.reduce(
+    (acc, f) => {
+      acc.total += f.oz;
+      if (f.milkType === "EBM") acc.ebm += f.oz;
+      else if (f.milkType === "FM") acc.fm += f.oz;
+      return acc;
+    },
+    { total: 0, ebm: 0, fm: 0 },
+  );
+}
+
 function isMissingTableError(message: string) {
   return (
     message.includes("does not exist") ||
@@ -308,6 +320,7 @@ export default function MilkTracker({
     (f) => new Date(f.timestamp).toDateString() === selectedDateKey,
   );
   const selectedTotal = selectedFeedings.reduce((s, f) => s + f.oz, 0);
+  const selectedMilk = dayMilkTotals(selectedFeedings);
 
   const logFeeding = useCallback(
     async (loggedAtTs: number) => {
@@ -940,6 +953,21 @@ export default function MilkTracker({
                     <span className="day-hero-oz-unit">oz total</span>
                   </div>
                 </div>
+
+                {activeTab === "history" && (
+                  <div className="day-milk-split">
+                    <div className="day-milk-item">
+                      <span className="day-milk-num">{selectedMilk.ebm.toFixed(1)}</span>
+                      <span className="day-milk-unit">oz</span>
+                      <span className="day-milk-label">EBM</span>
+                    </div>
+                    <div className="day-milk-item">
+                      <span className="day-milk-num">{selectedMilk.fm.toFixed(1)}</span>
+                      <span className="day-milk-unit">oz</span>
+                      <span className="day-milk-label">FM</span>
+                    </div>
+                  </div>
+                )}
 
                 <ul className="feeding-list feed-list-v2">
                   {[...selectedFeedings].reverse().map((f, i, arr) => {
