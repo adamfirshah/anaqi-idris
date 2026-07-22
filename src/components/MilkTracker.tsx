@@ -647,6 +647,17 @@ export default function MilkTracker({
   const todayFmOz = todayFeedings
     .filter((f) => f.milkType === "FM")
     .reduce((s, f) => s + f.oz, 0);
+  const todayDirectFeeds = directFeeds.filter(
+    (f) => new Date(f.timestamp).toDateString() === todayStr(),
+  );
+  const todayPoopsCount = poopLogs.filter(
+    (p) => new Date(p.timestamp).toDateString() === todayStr(),
+  ).length;
+  const todayActivityCount =
+    todayFeedings.length +
+    todayPoopsCount +
+    todayDirectFeeds.length +
+    (appetonLogs[todayStr()] != null ? 1 : 0);
 
   const pastFeedings = feedings.filter(
     (f) => new Date(f.timestamp).toDateString() !== todayStr(),
@@ -789,8 +800,14 @@ export default function MilkTracker({
 
   const logDirectFeed = useCallback(async () => {
     const loggedAt = Date.now();
+    const tempId = crypto.randomUUID();
+    const optimistic: DirectFeedLog = { id: tempId, timestamp: loggedAt };
+
     setDirectFeedSaving(true);
     setError("");
+    setActiveTab("today");
+    setSelectedDateKey(todayStr());
+    setDirectFeeds((prev) => mergeDirectFeeds(family.familyId, prev, [optimistic]));
 
     const { data, error: insertError } = await supabase
       .from("direct_feed_logs")
@@ -806,21 +823,22 @@ export default function MilkTracker({
 
     if (insertError) {
       if (isMissingTableError(insertError.message)) {
-        const localFeed: DirectFeedLog = {
-          id: crypto.randomUUID(),
-          timestamp: loggedAt,
-        };
-        setDirectFeeds((prev) =>
-          mergeDirectFeeds(family.familyId, prev, [localFeed]),
-        );
         return;
       }
+      setDirectFeeds((prev) => {
+        const next = prev.filter((feed) => feed.id !== tempId);
+        writeStoredDirectFeeds(family.familyId, next);
+        return next;
+      });
       setError(insertError.message);
       return;
     }
 
     const saved = rowToDirectFeedLog(data as DirectFeedLogRow);
-    setDirectFeeds((prev) => mergeDirectFeeds(family.familyId, prev, [saved]));
+    setDirectFeeds((prev) => {
+      const withoutTemp = prev.filter((feed) => feed.id !== tempId);
+      return mergeDirectFeeds(family.familyId, withoutTemp, [saved]);
+    });
   }, [family.familyId, session.user.id]);
 
   const removeDirectFeed = useCallback(
@@ -1240,7 +1258,7 @@ export default function MilkTracker({
             <div className="prepare-banner">
               <span className="prepare-icon">⏱️</span>
               <span>
-                Time to bancuh & panaskan susu - and ready to feed him{" "}
+                Prep time - and ready to feed him{" "}
               </span>
             </div>
           )}
@@ -1570,8 +1588,8 @@ export default function MilkTracker({
               }}
             >
               Today
-              {todayFeedings.length > 0 && (
-                <span className="tab-badge">{todayFeedings.length}</span>
+              {todayActivityCount > 0 && (
+                <span className="tab-badge">{todayActivityCount}</span>
               )}
             </button>
             <button
