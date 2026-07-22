@@ -954,10 +954,12 @@ export default function MilkTracker({
                 day: "numeric",
                 month: "long",
               })}
-              <span className="header-age">
-                {" · "}
-                {formatBabyAge(BABY_BIRTH_DATE, now)}
-              </span>
+              {person === "anaqi" && (
+                <span className="header-age">
+                  {" · "}
+                  {formatBabyAge(BABY_BIRTH_DATE, now)}
+                </span>
+              )}
             </p>
           </div>
         </header>
