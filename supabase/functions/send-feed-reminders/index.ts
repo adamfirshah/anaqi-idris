@@ -135,7 +135,7 @@ function pemToArrayBuffer(pem: string) {
     for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i)
     return buf.buffer
   } catch {
-    throw new Error(
+    throw new Error( 
       'Invalid FIREBASE_PRIVATE_KEY — re-paste from Firebase JSON (no quotes, include BEGIN/END lines)',
     )
   }
