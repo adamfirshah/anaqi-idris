@@ -2067,7 +2067,7 @@ export default function MilkTracker({
                     </div>
 
                     {activeTab === "history" && (
-                      <div className="day-milk-split">
+                      <div className="day-milk-split day-milk-split-three">
                         <div className="day-milk-item">
                           <span className="day-milk-num">{selectedMilk.ebm.toFixed(1)}</span>
                           <span className="day-milk-unit">oz</span>
@@ -2077,6 +2077,15 @@ export default function MilkTracker({
                           <span className="day-milk-num">{selectedMilk.fm.toFixed(1)}</span>
                           <span className="day-milk-unit">oz</span>
                           <span className="day-milk-label">FM</span>
+                        </div>
+                        <div className="day-milk-item">
+                          <span className="day-milk-num">
+                            {selectedDirectFeeds.length}
+                          </span>
+                          <span className="day-milk-unit">
+                            {selectedDirectFeeds.length > 0 ? "x" : "no direct"}
+                          </span>
+                          <span className="day-milk-label">Direct feed</span>
                         </div>
                       </div>
                     )}

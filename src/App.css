@@ -179,7 +179,6 @@
   grid-template-columns: repeat(3, 1fr);
   margin-bottom: 0.875rem;
 }
-.stats-row-direct-feed { margin-bottom: 0.625rem; }
 
 .stat-box-highlight {
   background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
@@ -1018,6 +1017,9 @@
   gap: 0.5rem;
   margin-bottom: 0.875rem;
 }
+.day-milk-split-three {
+  grid-template-columns: repeat(3, 1fr);
+}
 .day-milk-item {
   display: flex;
   flex-direction: column;
@@ -1037,6 +1039,7 @@
   font-size: 0.68rem;
   font-weight: 700;
   color: #6366f1;
+  text-align: center;
 }
 .day-milk-label {
   margin-top: 0.2rem;

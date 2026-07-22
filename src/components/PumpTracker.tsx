@@ -134,9 +134,6 @@ export default function PumpTracker({
     s => new Date(s.timestamp).toDateString() === todayStr(),
   )
   const dailyOz = todaySessions.reduce((sum, s) => sum + s.oz, 0)
-  const todayDirectFeeds = directFeeds.filter(
-    f => new Date(f.timestamp).toDateString() === todayStr(),
-  )
 
   const pastSessions = sessions.filter(
     s => new Date(s.timestamp).toDateString() !== todayStr(),
@@ -289,13 +286,6 @@ export default function PumpTracker({
           <span>Good time to pump — helps keep supply steady for Idris</span>
         </div>
       )}
-
-      <div className="stats-row stats-row-direct-feed">
-        <div className="stat-box pump-stat stat-box-wide">
-          <span className="stat-value">{todayDirectFeeds.length}</span>
-          <p className="stat-label">Total direct feed today</p>
-        </div>
-      </div>
 
       <div className="stats-row">
         <div className="stat-box pump-stat">
