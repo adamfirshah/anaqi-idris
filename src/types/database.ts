@@ -141,3 +141,23 @@ export function poopDisplayText(poopType: PoopType): string {
   if (poopType === 'Both') return 'Idris pooped & peed!'
   return 'Idris pooped!'
 }
+
+export interface DirectFeedLogRow {
+  id: string
+  family_id: string
+  logged_at: string
+  logged_by: string | null
+  created_at: string
+}
+
+export interface DirectFeedLog {
+  id: string
+  timestamp: number
+}
+
+export function rowToDirectFeedLog(row: DirectFeedLogRow): DirectFeedLog {
+  return {
+    id: row.id,
+    timestamp: new Date(row.logged_at).getTime(),
+  }
+}

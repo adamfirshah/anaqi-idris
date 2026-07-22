@@ -25,6 +25,8 @@ import type {
   BabyMeasurementRow,
   PoopLog,
   PoopLogRow,
+  DirectFeedLog,
+  DirectFeedLogRow,
 } from "../types/database";
 import {
   rowToFeeding,
@@ -32,6 +34,7 @@ import {
   rowToBabyMeasurement,
   rowToPoopLog,
   poopDisplayText,
+  rowToDirectFeedLog,
 } from "../types/database";
 import { usePushNotifications } from "../hooks/usePushNotifications";
 import { showLocalNotification } from "../lib/push";
@@ -153,14 +156,60 @@ function writeStoredAppetonLogs(familyId: string, logs: Record<string, number>) 
   }
 }
 
+function directFeedStorageKey(familyId: string) {
+  return `direct-feeds-${familyId}`;
+}
+
+function readStoredDirectFeeds(familyId: string): DirectFeedLog[] {
+  try {
+    const raw = localStorage.getItem(directFeedStorageKey(familyId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as DirectFeedLog[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.timestamp === "number",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredDirectFeeds(familyId: string, feeds: DirectFeedLog[]) {
+  try {
+    localStorage.setItem(directFeedStorageKey(familyId), JSON.stringify(feeds));
+  } catch {
+    /* ignore */
+  }
+}
+
+function mergeDirectFeeds(
+  familyId: string,
+  ...sources: DirectFeedLog[][]
+): DirectFeedLog[] {
+  const merged = new Map<string, DirectFeedLog>();
+  for (const source of sources) {
+    for (const feed of source) {
+      merged.set(feed.id, feed);
+    }
+  }
+  const next = [...merged.values()].sort((a, b) => a.timestamp - b.timestamp);
+  writeStoredDirectFeeds(familyId, next);
+  return next;
+}
+
 type ActivityItem =
   | { kind: "feeding"; feeding: Feeding }
   | { kind: "appeton"; timestamp: number }
-  | { kind: "poop"; poop: PoopLog };
+  | { kind: "poop"; poop: PoopLog }
+  | { kind: "direct_feed"; feed: DirectFeedLog };
 
 function activityTimestamp(item: ActivityItem): number {
   if (item.kind === "feeding") return item.feeding.timestamp;
   if (item.kind === "poop") return item.poop.timestamp;
+  if (item.kind === "direct_feed") return item.feed.timestamp;
   return item.timestamp;
 }
 
@@ -168,6 +217,7 @@ function buildActivityList(
   feedings: Feeding[],
   appetonTs: number | null,
   poops: PoopLog[],
+  directFeeds: DirectFeedLog[],
 ): ActivityItem[] {
   const items: ActivityItem[] = feedings.map((feeding) => ({
     kind: "feeding",
@@ -178,6 +228,9 @@ function buildActivityList(
   }
   for (const poop of poops) {
     items.push({ kind: "poop", poop });
+  }
+  for (const feed of directFeeds) {
+    items.push({ kind: "direct_feed", feed });
   }
   return items.sort((a, b) => activityTimestamp(a) - activityTimestamp(b));
 }
@@ -239,6 +292,10 @@ export default function MilkTracker({
     toTimeInputValue(Date.now() - 30 * 60 * 1000),
   );
   const [justLoggedPoop, setJustLoggedPoop] = useState(false);
+  const [directFeeds, setDirectFeeds] = useState<DirectFeedLog[]>(() =>
+    readStoredDirectFeeds(family.familyId),
+  );
+  const [directFeedSaving, setDirectFeedSaving] = useState(false);
   const { notiStatus, notiError, iosHint, enableNotifications } = usePushNotifications(
     session.user.id,
   );
@@ -474,12 +531,33 @@ export default function MilkTracker({
     setPoopLogs((data as PoopLogRow[] | null)?.map(rowToPoopLog) ?? []);
   }, []);
 
+  const fetchDirectFeeds = useCallback(async () => {
+    const stored = readStoredDirectFeeds(family.familyId);
+    const { data, error: fetchError } = await supabase
+      .from("direct_feed_logs")
+      .select("*")
+      .order("logged_at", { ascending: true });
+
+    if (fetchError) {
+      if (!isMissingTableError(fetchError.message)) {
+        setError(fetchError.message);
+      }
+      setDirectFeeds(stored);
+      return;
+    }
+
+    const fromDb =
+      (data as DirectFeedLogRow[] | null)?.map(rowToDirectFeedLog) ?? [];
+    setDirectFeeds(mergeDirectFeeds(family.familyId, stored, fromDb));
+  }, [family.familyId]);
+
   useEffect(() => {
     fetchFeedings();
     fetchGrowth();
     fetchFridgeEbm();
     fetchAppeton();
     fetchPoopLogs();
+    fetchDirectFeeds();
 
     const feedingsChannel = supabase
       .channel("feedings-changes")
@@ -526,14 +604,24 @@ export default function MilkTracker({
       )
       .subscribe();
 
+    const directFeedChannel = supabase
+      .channel("direct-feed-logs-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "direct_feed_logs" },
+        () => fetchDirectFeeds(),
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(feedingsChannel);
       supabase.removeChannel(growthChannel);
       supabase.removeChannel(fridgeChannel);
       supabase.removeChannel(appetonChannel);
       supabase.removeChannel(poopChannel);
+      supabase.removeChannel(directFeedChannel);
     };
-  }, [fetchFeedings, fetchGrowth, fetchFridgeEbm, fetchAppeton, fetchPoopLogs]);
+  }, [fetchFeedings, fetchGrowth, fetchFridgeEbm, fetchAppeton, fetchPoopLogs, fetchDirectFeeds]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -573,6 +661,7 @@ export default function MilkTracker({
     ...new Set([
       ...feedings.map((f) => new Date(f.timestamp).toDateString()),
       ...poopLogs.map((p) => new Date(p.timestamp).toDateString()),
+      ...directFeeds.map((f) => new Date(f.timestamp).toDateString()),
       ...Object.keys(appetonLogs),
     ]),
   ].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
@@ -590,6 +679,9 @@ export default function MilkTracker({
   const selectedPoops = poopLogs.filter(
     (p) => new Date(p.timestamp).toDateString() === selectedDateKey,
   );
+  const selectedDirectFeeds = directFeeds.filter(
+    (f) => new Date(f.timestamp).toDateString() === selectedDateKey,
+  );
   const selectedTotal = selectedFeedings.reduce((s, f) => s + f.oz, 0);
   const selectedMilk = dayMilkTotals(selectedFeedings);
   const selectedAppetonTs = appetonLogs[selectedDateKey] ?? null;
@@ -597,6 +689,7 @@ export default function MilkTracker({
     selectedFeedings,
     selectedAppetonTs,
     selectedPoops,
+    selectedDirectFeeds,
   );
   const hasSelectedActivity = selectedActivity.length > 0;
 
@@ -692,6 +785,66 @@ export default function MilkTracker({
       }
     },
     [fetchPoopLogs],
+  );
+
+  const logDirectFeed = useCallback(async () => {
+    const loggedAt = Date.now();
+    setDirectFeedSaving(true);
+    setError("");
+
+    const { data, error: insertError } = await supabase
+      .from("direct_feed_logs")
+      .insert({
+        family_id: family.familyId,
+        logged_at: new Date(loggedAt).toISOString(),
+        logged_by: session.user.id,
+      })
+      .select()
+      .single();
+
+    setDirectFeedSaving(false);
+
+    if (insertError) {
+      if (isMissingTableError(insertError.message)) {
+        const localFeed: DirectFeedLog = {
+          id: crypto.randomUUID(),
+          timestamp: loggedAt,
+        };
+        setDirectFeeds((prev) =>
+          mergeDirectFeeds(family.familyId, prev, [localFeed]),
+        );
+        return;
+      }
+      setError(insertError.message);
+      return;
+    }
+
+    const saved = rowToDirectFeedLog(data as DirectFeedLogRow);
+    setDirectFeeds((prev) => mergeDirectFeeds(family.familyId, prev, [saved]));
+  }, [family.familyId, session.user.id]);
+
+  const removeDirectFeed = useCallback(
+    async (id: string) => {
+      const snapshot = directFeeds;
+      setDirectFeeds((prev) => {
+        const next = prev.filter((feed) => feed.id !== id);
+        writeStoredDirectFeeds(family.familyId, next);
+        return next;
+      });
+      setError("");
+
+      const { error: deleteError } = await supabase
+        .from("direct_feed_logs")
+        .delete()
+        .eq("id", id);
+
+      if (deleteError && !isMissingTableError(deleteError.message)) {
+        setDirectFeeds(snapshot);
+        writeStoredDirectFeeds(family.familyId, snapshot);
+        setError(deleteError.message);
+      }
+    },
+    [directFeeds, family.familyId],
   );
 
   const adjustFridgeEbm = useCallback(
@@ -815,7 +968,14 @@ export default function MilkTracker({
       </div>
 
       {person === "mummy" ? (
-        <PumpTracker session={session} family={family} />
+        <PumpTracker
+          session={session}
+          family={family}
+          directFeeds={directFeeds}
+          onLogDirectFeed={logDirectFeed}
+          directFeedSaving={directFeedSaving}
+          onRemoveDirectFeed={removeDirectFeed}
+        />
       ) : (
         <>
           {error && (
@@ -842,7 +1002,7 @@ export default function MilkTracker({
               onClick={() => setGrowthOpen((open) => !open)}
               aria-expanded={growthOpen}
             >
-              <span className="growth-collapse-title">Growth</span>
+              <span className="growth-collapse-title"> </span>
               {latestMeasurement ? (
                 <>
                   <span className="growth-collapse-metrics">
@@ -1006,7 +1166,7 @@ export default function MilkTracker({
                 const cd = formatCountdown(prepareTs - now);
                 return (
                   <>
-                    <p className="cd-label">Prep susu sebelum idris nangis</p>
+                    <p className="cd-label">Prep susu</p>
                     <p className="cd-time">
                       {cd.h > 0 && (
                         <>
@@ -1085,6 +1245,21 @@ export default function MilkTracker({
             </div>
           )}
 
+          <div className="stats-row stats-row-secondary">
+            <div className="stat-box stat-box-highlight">
+              <span className="stat-value">
+                {lastFeeding ? formatTime(lastFeeding.timestamp) : "—"}
+              </span>
+              <p className="stat-label">Last fed</p>
+            </div>
+            <div className="stat-box stat-box-highlight">
+              <span className="stat-value">
+                {nextFeedTs ? formatTime(nextFeedTs) : "—"}
+              </span>
+              <p className="stat-label">Next feed</p>
+            </div>
+          </div>
+
           <div className="fridge-ebm-card">
             <p className="fridge-ebm-label">Total EBM in fridge</p>
             <div className="fridge-ebm-controls">
@@ -1141,25 +1316,9 @@ export default function MilkTracker({
               <p className="stat-label">FM today</p>
             </div>
           </div>
-          <div className="stats-row stats-row-secondary">
-            <div className="stat-box stat-box-highlight">
-              <span className="stat-value">
-                {lastFeeding ? formatTime(lastFeeding.timestamp) : "—"}
-              </span>
-              <p className="stat-label">Last fed</p>
-            </div>
-            <div className="stat-box stat-box-highlight">
-              <span className="stat-value">
-                {nextFeedTs ? formatTime(nextFeedTs) : "—"}
-              </span>
-              <p className="stat-label">Next feed</p>
-            </div>
-          </div>
-
-    
 
           <div className="card log-card">
-            <h2 className="card-title">Berapa banyak Idris minum??</h2>
+            <h2 className="card-title">How much Idris drink?</h2>
 
             <p className="section-label">Amount</p>
             <div className="oz-row">
@@ -1477,6 +1636,7 @@ export default function MilkTracker({
                             selectedFeedings[0]?.timestamp ??
                               selectedAppetonTs ??
                               selectedPoops[0]?.timestamp ??
+                              selectedDirectFeeds[0]?.timestamp ??
                               Date.now(),
                           )}
                         </span>
@@ -1486,6 +1646,8 @@ export default function MilkTracker({
                               `${selectedFeedings.length} feeding${selectedFeedings.length !== 1 ? "s" : ""}`,
                             selectedPoops.length > 0 &&
                               `${selectedPoops.length} poop${selectedPoops.length !== 1 ? "s" : ""}`,
+                            selectedDirectFeeds.length > 0 &&
+                              `${selectedDirectFeeds.length} direct feed${selectedDirectFeeds.length !== 1 ? "s" : ""}`,
                           ]
                             .filter(Boolean)
                             .join(" · ")}
@@ -1574,6 +1736,34 @@ export default function MilkTracker({
                                   className="remove-btn"
                                   onClick={() => removePoop(p.id)}
                                   aria-label="Remove poop log"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        }
+
+                        if (item.kind === "direct_feed") {
+                          const df = item.feed;
+                          return (
+                            <li key={df.id} className="feeding-item">
+                              {gapEl}
+                              <div className="activity-log-row activity-direct-feed-row">
+                                <span className="activity-log-icon">👶</span>
+                                <div className="activity-log-meta">
+                                  <span className="activity-log-text">
+                                    Direct feed with Idris!
+                                  </span>
+                                  <span className="feed-time">
+                                    {formatTime(df.timestamp)}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="remove-btn"
+                                  onClick={() => removeDirectFeed(df.id)}
+                                  aria-label="Remove direct feed log"
                                 >
                                   ×
                                 </button>
