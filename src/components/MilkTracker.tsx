@@ -15,6 +15,8 @@ import {
   todayTimeInputToTimestamp,
   toDateInputValue,
   dateInputToTimestamp,
+  formatBabyAge,
+  BABY_BIRTH_DATE,
 } from "../lib/format";
 import type {
   FamilyInfo,
@@ -45,7 +47,7 @@ import "../Auth.css";
 const FEED_INTERVAL_MS = 2 * 60 * 60 * 1000;
 const PREPARE_WARN_MS = 60 * 60 * 1000;
 const QUICK_OZ = [2, 2.5, 3, 3.5, 4];
-const MILK_TYPES = ["FM", "EBM", "BM"] as const;
+const MILK_TYPES = ["FM", "EBM"] as const;
 const FORGOT_AGO_MIN = [15, 30, 45, 60] as const;
 const FRIDGE_EBM_STEP = 1;
 
@@ -630,11 +632,19 @@ export default function MilkTracker({
 
   const lastFeeding =
     feedings.length > 0 ? feedings[feedings.length - 1] : null;
-  const nextFeedTs = lastFeeding
-    ? lastFeeding.timestamp + FEED_INTERVAL_MS
-    : null;
+  const lastDirectFeed =
+    directFeeds.length > 0 ? directFeeds[directFeeds.length - 1] : null;
+  const waitingForCue =
+    lastDirectFeed != null &&
+    (!lastFeeding || lastDirectFeed.timestamp > lastFeeding.timestamp);
+  const nextFeedTs =
+    lastFeeding && !waitingForCue
+      ? lastFeeding.timestamp + FEED_INTERVAL_MS
+      : null;
   const remaining = nextFeedTs ? nextFeedTs - now : null;
-  const status = getStatus(lastFeeding?.timestamp ?? null, now);
+  const status = waitingForCue
+    ? "cue"
+    : getStatus(lastFeeding?.timestamp ?? null, now);
   const countdown = remaining !== null ? formatCountdown(remaining) : null;
 
   const todayFeedings = feedings.filter(
@@ -944,6 +954,10 @@ export default function MilkTracker({
                 day: "numeric",
                 month: "long",
               })}
+              <span className="header-age">
+                {" · "}
+                {formatBabyAge(BABY_BIRTH_DATE, now)}
+              </span>
             </p>
           </div>
         </header>
@@ -1167,7 +1181,17 @@ export default function MilkTracker({
           </div>
 
           <div className={`card countdown-card status-${status}`}>
-            {status === "none" && (
+            {waitingForCue && lastDirectFeed && (
+              <>
+                <p className="cd-label">🤱 Idris just had Direct feed</p>
+                <p className="cd-time cd-time-cue">Watch for cue</p>
+                <p className="cd-sub">
+                  Feed when Idris shows hunger cues
+                </p>
+              </>
+            )}
+
+            {!waitingForCue && status === "none" && (
               <>
                 <p className="cd-label">No feedings yet</p>
                 <p className="cd-time">—</p>
@@ -1175,7 +1199,8 @@ export default function MilkTracker({
               </>
             )}
 
-            {status === "ok" &&
+            {!waitingForCue &&
+              status === "ok" &&
               lastFeeding &&
               nextFeedTs &&
               (() => {
@@ -1213,7 +1238,7 @@ export default function MilkTracker({
                 );
               })()}
 
-            {status === "prepare" && countdown && nextFeedTs && (
+            {!waitingForCue && status === "prepare" && countdown && nextFeedTs && (
               <>
                 <p className="cd-label">🍼 Prepare Now!</p>
                 <p className="cd-time">
@@ -1232,7 +1257,7 @@ export default function MilkTracker({
               </>
             )}
 
-            {status === "overdue" && countdown && lastFeeding && (
+            {!waitingForCue && status === "overdue" && countdown && lastFeeding && (
               <>
                 <p className="cd-label">Feeding overdue!</p>
                 <p className="cd-time">
@@ -1254,7 +1279,7 @@ export default function MilkTracker({
             )}
           </div>
 
-          {status === "prepare" && (
+          {status === "prepare" && !waitingForCue && (
             <div className="prepare-banner">
               <span className="prepare-icon">⏱️</span>
               <span>
@@ -1268,11 +1293,15 @@ export default function MilkTracker({
               <span className="stat-value">
                 {lastFeeding ? formatTime(lastFeeding.timestamp) : "—"}
               </span>
-              <p className="stat-label">Last fed</p>
+              <p className="stat-label">
+                {waitingForCue ? "Last bottle fed" : "Last fed"}
+              </p>
             </div>
             <div className="stat-box stat-box-highlight">
-              <span className="stat-value">
-                {nextFeedTs ? formatTime(nextFeedTs) : "—"}
+              <span
+                className={`stat-value ${waitingForCue ? "stat-value-cue" : ""}`}
+              >
+                {waitingForCue ? "Waiting for Cue" : nextFeedTs ? formatTime(nextFeedTs) : "—"}
               </span>
               <p className="stat-label">Next feed</p>
             </div>
@@ -1328,15 +1357,29 @@ export default function MilkTracker({
               <span className="stat-unit">oz</span>
               <p className="stat-label">EBM today</p>
             </div>
+          
             <div className="stat-box">
               <span className="stat-value">{todayFmOz.toFixed(1)}</span>
               <span className="stat-unit">oz</span>
               <p className="stat-label">FM today</p>
             </div>
+            <div className="stat-box">
+              <span className="stat-value">{todayDirectFeeds.length}</span>
+              <p className="stat-label">Direct feed</p>
+            </div>
           </div>
 
           <div className="card log-card">
             <h2 className="card-title">How much Idris drink?</h2>
+
+            <button
+              type="button"
+              className="direct-feed-btn"
+              disabled={directFeedSaving}
+              onClick={logDirectFeed}
+            >
+              {directFeedSaving ? "Saving…" : "👶 Direct feed"}
+            </button>
 
             <p className="section-label">Amount</p>
             <div className="oz-row">

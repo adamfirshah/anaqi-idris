@@ -37,6 +37,38 @@ export function todayIsoDate() {
   return new Date().toLocaleDateString('en-CA')
 }
 
+/** Idris — born 30 May 2026 */
+export const BABY_BIRTH_DATE = new Date(2026, 4, 30)
+
+export function formatBabyAge(birthDate: Date, now = Date.now()): string {
+  const start = new Date(birthDate)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(now)
+  end.setHours(0, 0, 0, 0)
+
+  if (end < start) return '0 days'
+
+  let months = 0
+  let cursor = new Date(start)
+  while (true) {
+    const next = new Date(cursor)
+    next.setMonth(next.getMonth() + 1)
+    if (next > end) break
+    months++
+    cursor = next
+  }
+
+  const days = Math.round((end.getTime() - cursor.getTime()) / 86_400_000)
+
+  if (months === 0) {
+    return days === 1 ? '1 day' : `${days} days`
+  }
+  const monthLabel = months === 1 ? '1 month' : `${months} months`
+  if (days === 0) return monthLabel
+  const dayLabel = days === 1 ? '1 day' : `${days} days`
+  return `${monthLabel} ${dayLabel}`
+}
+
 export function formatCountdown(ms: number): { h: number; m: number; overdue: boolean } {
   const overdue = ms < 0
   const abs = Math.abs(ms)
