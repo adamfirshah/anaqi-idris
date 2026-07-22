@@ -1237,7 +1237,7 @@ export default function MilkTracker({
               onClick={() => setGrowthOpen((open) => !open)}
               aria-expanded={growthOpen}
             >
-              <span className="growth-collapse-title"> </span>
+              <span className="growth-collapse-title">GROWTH </span>
               {latestMeasurement ? (
                 <>
                   <span className="growth-collapse-metrics">
@@ -1259,12 +1259,12 @@ export default function MilkTracker({
               <div className="growth-collapse-body">
                 {latestMeasurement ? (
                   <>
-                    <div className="growth-latest-banner">
+                    {/* <div className="growth-latest-banner">
                       <p className="growth-latest-label">Latest</p>
                       <p className="growth-latest-date">
                         {formatGrowthDate(latestMeasurement.measuredAt)}
                       </p>
-                    </div>
+                    </div> */}
                     <div className="growth-collapse-stats">
                       <div className="stat-box">
                         <span className="stat-value">
