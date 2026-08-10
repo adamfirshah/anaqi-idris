@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import {
@@ -52,7 +52,6 @@ const PREPARE_WARN_MS = 60 * 60 * 1000;
 const QUICK_OZ = [2, 2.5, 3, 3.5, 4];
 const MILK_TYPES = ["FM", "EBM"] as const;
 const FORGOT_AGO_MIN = [15, 30, 45, 60] as const;
-const FRIDGE_EBM_STEP = 1;
 const APPOINTMENT_LOCATIONS = ["Dr. Kent Avisena", "KK Cyberjaya"] as const;
 
 type Status = "none" | "ok" | "prepare" | "overdue";
@@ -84,49 +83,6 @@ function isMissingTableError(message: string) {
     message.includes("Could not find the table") ||
     message.includes("Could not find the column")
   );
-}
-
-function fridgeStorageKey(familyId: string) {
-  return `fridge-ebm-${familyId}`;
-}
-
-interface StoredFridge {
-  count: number;
-  updatedAt: number | null;
-}
-
-function readStoredFridge(familyId: string): StoredFridge {
-  try {
-    const raw = localStorage.getItem(fridgeStorageKey(familyId));
-    if (raw == null) return { count: 0, updatedAt: null };
-    try {
-      const parsed = JSON.parse(raw) as StoredFridge;
-      if (parsed && typeof parsed.count === "number") {
-        return {
-          count: parsed.count >= 0 ? parsed.count : 0,
-          updatedAt:
-            typeof parsed.updatedAt === "number" ? parsed.updatedAt : null,
-        };
-      }
-    } catch {
-      /* legacy plain number string */
-    }
-    const n = parseInt(raw, 10);
-    return {
-      count: Number.isFinite(n) && n >= 0 ? n : 0,
-      updatedAt: null,
-    };
-  } catch {
-    return { count: 0, updatedAt: null };
-  }
-}
-
-function writeStoredFridge(familyId: string, data: StoredFridge) {
-  try {
-    localStorage.setItem(fridgeStorageKey(familyId), JSON.stringify(data));
-  } catch {
-    /* ignore quota / private mode */
-  }
 }
 
 function appetonStorageKey(familyId: string) {
@@ -335,26 +291,12 @@ export default function MilkTracker({
   const [appointmentLocation, setAppointmentLocation] = useState("");
   const [appointmentNote, setAppointmentNote] = useState("");
   const [appointmentSaving, setAppointmentSaving] = useState(false);
-  const storedFridge = readStoredFridge(family.familyId);
-  const [fridgeEbmCount, setFridgeEbmCount] = useState(storedFridge.count);
-  const [fridgeUpdatedAt, setFridgeUpdatedAt] = useState<number | null>(
-    storedFridge.updatedAt,
-  );
-  const [fridgeUpdating, setFridgeUpdating] = useState(false);
-  const fridgeEbmRef = useRef(fridgeEbmCount);
-  const fridgeUpdatedAtRef = useRef(fridgeUpdatedAt);
-  const fridgeUpdatingRef = useRef(false);
   const [appetonLogs, setAppetonLogs] = useState<Record<string, number>>(
     () => readStoredAppetonLogs(family.familyId),
   );
   const [appetonSaving, setAppetonSaving] = useState(false);
   const appetonDoneToday = appetonLogs[todayStr()] != null;
   const [poopLogs, setPoopLogs] = useState<PoopLog[]>([]);
-  const [poopOpen, setPoopOpen] = useState(false);
-  const [poopForgotOpen, setPoopForgotOpen] = useState(false);
-  const [poopForgotTime, setPoopForgotTime] = useState(() =>
-    toTimeInputValue(Date.now() - 30 * 60 * 1000),
-  );
   const [justLoggedPoop, setJustLoggedPoop] = useState(false);
   const [directFeeds, setDirectFeeds] = useState<DirectFeedLog[]>(() =>
     readStoredDirectFeeds(family.familyId),
@@ -363,25 +305,6 @@ export default function MilkTracker({
   const { notiStatus, notiError, iosHint, enableNotifications } = usePushNotifications(
     session.user.id,
   );
-
-  const persistFridge = useCallback(
-    (count: number, updatedAt: number | null) => {
-      fridgeEbmRef.current = count;
-      fridgeUpdatedAtRef.current = updatedAt;
-      setFridgeEbmCount(count);
-      setFridgeUpdatedAt(updatedAt);
-      writeStoredFridge(family.familyId, { count, updatedAt });
-    },
-    [family.familyId],
-  );
-
-  useEffect(() => {
-    fridgeEbmRef.current = fridgeEbmCount;
-  }, [fridgeEbmCount]);
-
-  useEffect(() => {
-    fridgeUpdatedAtRef.current = fridgeUpdatedAt;
-  }, [fridgeUpdatedAt]);
 
   const fetchGrowth = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -444,6 +367,25 @@ export default function MilkTracker({
     session.user.id,
     fetchGrowth,
   ]);
+
+  const removeGrowthMeasurement = useCallback(
+    async (id: string) => {
+      const snapshot = growthHistory;
+      setGrowthHistory((prev) => prev.filter((m) => m.id !== id));
+      setError("");
+
+      const { error: deleteError } = await supabase
+        .from("baby_measurements")
+        .delete()
+        .eq("id", id);
+
+      if (deleteError && !isMissingTableError(deleteError.message)) {
+        setGrowthHistory(snapshot);
+        setError(deleteError.message);
+      }
+    },
+    [growthHistory],
+  );
 
   const growthFormValid =
     parseFloat(growthWeight) > 0 &&
@@ -563,33 +505,6 @@ export default function MilkTracker({
   );
 
   const appointmentFormValid = appointmentLocation.trim().length > 0;
-
-  const fetchFridgeEbm = useCallback(async () => {
-    if (fridgeUpdatingRef.current) return;
-
-    const { data, error: fetchError } = await supabase
-      .from("family_fridge")
-      .select("ebm_count, updated_at")
-      .eq("family_id", family.familyId)
-      .maybeSingle();
-
-    if (fetchError) {
-      if (!isMissingTableError(fetchError.message)) {
-        setError(fetchError.message);
-      }
-      return;
-    }
-
-    if (data == null) return;
-
-    const fromDb = Number(data.ebm_count);
-    if (!Number.isFinite(fromDb) || fromDb < 0) return;
-
-    const updatedAt = data.updated_at
-      ? new Date(data.updated_at).getTime()
-      : null;
-    persistFridge(fromDb, updatedAt);
-  }, [family.familyId, persistFridge]);
 
   const fetchAppeton = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -731,7 +646,6 @@ export default function MilkTracker({
   useEffect(() => {
     fetchFeedings();
     fetchGrowth();
-    fetchFridgeEbm();
     fetchAppeton();
     fetchPoopLogs();
     fetchDirectFeeds();
@@ -752,15 +666,6 @@ export default function MilkTracker({
         "postgres_changes",
         { event: "*", schema: "public", table: "baby_measurements" },
         () => fetchGrowth(),
-      )
-      .subscribe();
-
-    const fridgeChannel = supabase
-      .channel("family-fridge-changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "family_fridge" },
-        () => fetchFridgeEbm(),
       )
       .subscribe();
 
@@ -803,7 +708,6 @@ export default function MilkTracker({
     return () => {
       supabase.removeChannel(feedingsChannel);
       supabase.removeChannel(growthChannel);
-      supabase.removeChannel(fridgeChannel);
       supabase.removeChannel(appetonChannel);
       supabase.removeChannel(poopChannel);
       supabase.removeChannel(directFeedChannel);
@@ -812,7 +716,6 @@ export default function MilkTracker({
   }, [
     fetchFeedings,
     fetchGrowth,
-    fetchFridgeEbm,
     fetchAppeton,
     fetchPoopLogs,
     fetchDirectFeeds,
@@ -980,7 +883,6 @@ export default function MilkTracker({
         return;
       }
 
-      setPoopForgotOpen(false);
       setJustLoggedPoop(true);
       setTimeout(() => setJustLoggedPoop(false), 2000);
       fetchPoopLogs();
@@ -1076,56 +978,10 @@ export default function MilkTracker({
     [directFeeds, family.familyId],
   );
 
-  const adjustFridgeEbm = useCallback(
-    async (delta: number) => {
-      const prev = fridgeEbmRef.current;
-      const prevUpdatedAt = fridgeUpdatedAtRef.current;
-      const next = Math.max(0, prev + delta);
-      if (next === prev) return;
-
-      const updatedAt = Date.now();
-      fridgeUpdatingRef.current = true;
-      setFridgeUpdating(true);
-      persistFridge(next, updatedAt);
-      setError("");
-
-      const { error: upsertError } = await supabase.from("family_fridge").upsert(
-        {
-          family_id: family.familyId,
-          ebm_count: next,
-          updated_at: new Date(updatedAt).toISOString(),
-        },
-        { onConflict: "family_id" },
-      );
-
-      fridgeUpdatingRef.current = false;
-      setFridgeUpdating(false);
-
-      if (upsertError) {
-        if (isMissingTableError(upsertError.message)) {
-          return;
-        }
-        persistFridge(prev, prevUpdatedAt);
-        setError(upsertError.message);
-      }
-    },
-    [family.familyId, persistFridge],
-  );
-
   const forgotTs = todayTimeInputToTimestamp(forgotTime);
   const forgotValid =
     forgotTs <= Date.now() &&
     (!lastFeeding || forgotTs > lastFeeding.timestamp);
-
-  const todayPoops = poopLogs.filter(
-    (p) => new Date(p.timestamp).toDateString() === todayStr(),
-  );
-  const lastPoop =
-    todayPoops.length > 0 ? todayPoops[todayPoops.length - 1] : null;
-  const poopForgotTs = todayTimeInputToTimestamp(poopForgotTime);
-  const poopForgotValid =
-    poopForgotTs <= Date.now() &&
-    (!lastPoop || poopForgotTs > lastPoop.timestamp);
 
   if (loading) {
     return (
@@ -1304,6 +1160,14 @@ export default function MilkTracker({
                           {i === 0 && (
                             <span className="growth-history-badge">Latest</span>
                           )}
+                          <button
+                            type="button"
+                            className="remove-btn"
+                            onClick={() => removeGrowthMeasurement(m.id)}
+                            aria-label="Remove measurement"
+                          >
+                            ×
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -1653,38 +1517,6 @@ export default function MilkTracker({
             </div>
           </div>
 
-          <div className="fridge-ebm-card">
-            <p className="fridge-ebm-label">Total EBM in fridge</p>
-            <div className="fridge-ebm-controls">
-              <button
-                type="button"
-                className="fridge-ebm-btn"
-                disabled={fridgeUpdating || fridgeEbmCount <= 0}
-                onClick={() => adjustFridgeEbm(-FRIDGE_EBM_STEP)}
-                aria-label="Decrease fridge EBM"
-              >
-                −
-              </button>
-              <div className="fridge-ebm-value">
-                <span className="fridge-ebm-num">{fridgeEbmCount}</span>
-              </div>
-              <button
-                type="button"
-                className="fridge-ebm-btn"
-                disabled={fridgeUpdating}
-                onClick={() => adjustFridgeEbm(FRIDGE_EBM_STEP)}
-                aria-label="Increase fridge EBM"
-              >
-                +
-              </button>
-            </div>
-            {fridgeUpdatedAt != null && (
-              <p className="fridge-ebm-date">
-                Updated {formatDate(fridgeUpdatedAt)} · {formatTime(fridgeUpdatedAt)}
-              </p>
-            )}
-          </div>
-
           <div className="stats-row">
             <div className="stat-box">
               <span className="stat-value">{dailyOz.toFixed(1)}</span>
@@ -1715,9 +1547,7 @@ export default function MilkTracker({
             </div>
           </div>
 
-          <div className="card log-card">
-            <h2 className="card-title">How much Idris drink?</h2>
-
+          <div className="quick-log-row">
             <button
               type="button"
               className="direct-feed-btn"
@@ -1726,6 +1556,31 @@ export default function MilkTracker({
             >
               {directFeedSaving ? "Saving…" : "👶 Direct feed"}
             </button>
+
+            <button
+              type="button"
+              className={`poop-btn ${justLoggedPoop ? "logged" : ""}`}
+              onClick={() => logPoop(Date.now())}
+            >
+              {justLoggedPoop ? "✓ Poop" : "💩 Poop"}
+            </button>
+
+            <button
+              type="button"
+              className="appeton-btn"
+              disabled={appetonDoneToday || appetonSaving}
+              onClick={markAppetonDone}
+            >
+              {appetonSaving
+                ? "Saving…"
+                : appetonDoneToday
+                  ? "✓ Appeton"
+                  : "💊 Appeton"}
+            </button>
+          </div>
+
+          <div className="card log-card">
+            <h2 className="card-title">How much Idris drink?</h2>
 
             <p className="section-label">Amount</p>
             <div className="oz-row">
@@ -1769,17 +1624,6 @@ export default function MilkTracker({
                 </button>
               ))}
             </div>
-
-            {!appetonDoneToday && (
-              <button
-                type="button"
-                className="appeton-btn"
-                disabled={appetonSaving}
-                onClick={markAppetonDone}
-              >
-                {appetonSaving ? "Saving…" : "💊 Appeton"}
-              </button>
-            )}
 
             <input
               type="text"
@@ -1876,93 +1720,6 @@ export default function MilkTracker({
                 >
                   Log {oz}oz at {formatTime(forgotTs)}
                 </button>
-              </div>
-            )}
-          </div>
-
-          <div className={`growth-collapse poop-collapse ${poopOpen ? "open" : ""}`}>
-            <button
-              type="button"
-              className="growth-collapse-toggle"
-              onClick={() => setPoopOpen((open) => !open)}
-              aria-expanded={poopOpen}
-            >
-              <span className="growth-collapse-title">💩 Poop</span>
-              {lastPoop ? (
-                <>
-                  <span className="growth-collapse-metrics">
-                    {todayPoops.length} today · {formatTime(lastPoop.timestamp)}
-                  </span>
-                </>
-              ) : (
-                <span className="growth-collapse-summary">No poops today</span>
-              )}
-              <span className="growth-collapse-chevron" aria-hidden>
-                {poopOpen ? "▾" : "▸"}
-              </span>
-            </button>
-            {poopOpen && (
-              <div className="growth-collapse-body poop-collapse-body">
-                <button
-                  type="button"
-                  className={`log-btn poop-log-btn ${justLoggedPoop ? "logged" : ""}`}
-                  disabled={poopForgotOpen}
-                  onClick={() => logPoop(Date.now())}
-                >
-                  {justLoggedPoop ? "✓ Logged!" : "💩 Log Poop Now"}
-                </button>
-
-                <button
-                  type="button"
-                  className="forgot-toggle"
-                  onClick={() => setPoopForgotOpen((open) => !open)}
-                >
-                  {poopForgotOpen ? "Hide" : "Forgot to log?"}
-                </button>
-
-                {poopForgotOpen && (
-                  <div className="forgot-panel">
-                    <p className="section-label">When did he go?</p>
-                    <div className="oz-row">
-                      {FORGOT_AGO_MIN.map((m) => (
-                        <button
-                          key={m}
-                          type="button"
-                          className="oz-btn forgot-ago-btn"
-                          onClick={() =>
-                            setPoopForgotTime(
-                              toTimeInputValue(Date.now() - m * 60 * 1000),
-                            )
-                          }
-                        >
-                          {m}m ago
-                        </button>
-                      ))}
-                    </div>
-                    <div className="custom-row">
-                      <input
-                        type="time"
-                        className="oz-input forgot-time-input"
-                        value={poopForgotTime}
-                        onChange={(e) => setPoopForgotTime(e.target.value)}
-                        aria-label="Poop time"
-                      />
-                    </div>
-                    {!poopForgotValid && lastPoop && (
-                      <p className="forgot-error">
-                        Ambil masa lepas {formatTime(lastPoop.timestamp)} and not before
-                      </p>
-                    )}
-                    <button
-                      type="button"
-                      className="log-btn log-btn-missed poop-log-btn"
-                      disabled={!poopForgotValid}
-                      onClick={() => logPoop(poopForgotTs)}
-                    >
-                      Log poop at {formatTime(poopForgotTs)}
-                    </button>
-                  </div>
-                )}
               </div>
             )}
           </div>

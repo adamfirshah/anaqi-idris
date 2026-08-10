@@ -195,72 +195,6 @@
   font-weight: 600;
 }
 
-/* ─── Fridge EBM counter ─────────────────────────────────────── */
-.fridge-ebm-card {
-  background: #fff;
-  border-radius: 1rem;
-  padding: 0.875rem 1rem;
-  margin-bottom: 0.625rem;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
-  text-align: center;
-}
-.fridge-ebm-label {
-  margin: 0 0 0.625rem;
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.fridge-ebm-controls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-}
-.fridge-ebm-btn {
-  width: 2.5rem;
-  height: 2.5rem;
-  border: none;
-  border-radius: 0.75rem;
-  background: #ede9fe;
-  color: #6366f1;
-  font-size: 1.35rem;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.12s, opacity 0.12s;
-  -webkit-tap-highlight-color: transparent;
-}
-.fridge-ebm-btn:active:not(:disabled) { background: #ddd6fe; }
-.fridge-ebm-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-.fridge-ebm-value {
-  display: flex;
-  align-items: baseline;
-  gap: 0.2rem;
-  min-width: 5rem;
-  justify-content: center;
-}
-.fridge-ebm-num {
-  font-size: 1.75rem;
-  font-weight: 800;
-  color: #6366f1;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.fridge-ebm-date {
-  margin: 0.625rem 0 0;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: #94a3b8;
-}
-
 .stat-box-wide { grid-column: span 2; }
 .stat-value-sm {
   font-size: 0.95rem !important;
@@ -600,7 +534,7 @@
 
 .appeton-btn {
   width: 100%;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0;
   padding: 0.75rem;
   border: 2px dashed #f59e0b;
   border-radius: 0.75rem;
@@ -611,6 +545,29 @@
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
   -webkit-tap-highlight-color: transparent;
+}
+.poop-btn {
+  width: 100%;
+  margin-bottom: 0;
+  padding: 0.75rem;
+  border: 2px dashed #d4c4b0;
+  border-radius: 0.75rem;
+  background: #f5f0eb;
+  color: #6b5344;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+  -webkit-tap-highlight-color: transparent;
+}
+.poop-btn:active:not(:disabled) {
+  background: #ebe3d9;
+  border-color: #a67c00;
+}
+.poop-btn.logged {
+  background: #ebe3d9;
+  border-color: #8b6914;
+  color: #5c4a3a;
 }
 .appeton-btn:active:not(:disabled) {
   background: #fef3c7;
@@ -623,7 +580,7 @@
 
 .direct-feed-btn {
   width: 100%;
-  margin-bottom: 0.875rem;
+  margin-bottom: 0;
   padding: 0.75rem;
   border: 2px dashed #f9a8d4;
   border-radius: 0.75rem;
@@ -635,6 +592,69 @@
   transition: background 0.12s, border-color 0.12s;
   -webkit-tap-highlight-color: transparent;
 }
+.quick-log-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.625rem;
+  margin-bottom: 0.875rem;
+}
+.quick-log-row .direct-feed-btn,
+.quick-log-row .poop-btn,
+.quick-log-row .appeton-btn {
+  min-height: 3.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 0.35rem;
+  border: none;
+  border-radius: 0.875rem;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  text-align: center;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
+}
+.quick-log-row .direct-feed-btn {
+  background: #dcfce7;
+  color: #15803d;
+}
+.quick-log-row .direct-feed-btn:active:not(:disabled) {
+  background: #bbf7d0;
+  transform: scale(0.98);
+}
+.quick-log-row .direct-feed-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+.quick-log-row .poop-btn {
+  background: #f5ebe0;
+  color: #6b5344;
+}
+.quick-log-row .poop-btn:active:not(:disabled) {
+  background: #ebe0d4;
+  transform: scale(0.98);
+}
+.quick-log-row .poop-btn.logged {
+  background: #dcfce7;
+  color: #15803d;
+}
+.quick-log-row .appeton-btn {
+  background: #fef9c3;
+  color: #a16207;
+}
+.quick-log-row .appeton-btn:active:not(:disabled) {
+  background: #fef08a;
+  transform: scale(0.98);
+}
+.quick-log-row .appeton-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
 .direct-feed-btn:active:not(:disabled) {
   background: #fce7f3;
   border-color: #ec4899;
@@ -642,6 +662,9 @@
 .direct-feed-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+.pump-log .direct-feed-btn {
+  margin-bottom: 0.875rem;
 }
 
 .activity-direct-feed-row {
