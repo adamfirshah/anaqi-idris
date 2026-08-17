@@ -1208,6 +1208,36 @@
 .app-mummy .pump-stat .stat-value,
 .app-mummy .pump-stat .stat-unit { color: #ec4899; }
 
+.app-mummy .pump-ready-message {
+  display: inline-block;
+  margin-top: 0.45rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.app-mummy .pump-pitcher-done-btn {
+  display: block;
+  width: 100%;
+  margin-top: 0.65rem;
+  padding: 0.65rem 0.85rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: #ec4899;
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.app-mummy .pump-pitcher-done-btn:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
 .app-mummy .pump-oz-btn.active,
 .app-mummy .pump-side-btn.active { background: #ec4899; border-color: #ec4899; }
 

@@ -182,6 +182,7 @@ async function notifyFamily(
   body: string,
   icon: string,
   tag: string,
+  excludeUserId?: string,
 ) {
   let sent = 0
   const errors: string[] = []
@@ -193,6 +194,7 @@ async function notifyFamily(
     .eq('family_id', familyId)
 
   for (const member of members ?? []) {
+    if (member.user_id === excludeUserId) continue
     // One token per user (latest device only) — avoids duplicate pop-ups
     const { data: tokens } = await supabase
       .from('fcm_tokens')
@@ -217,11 +219,141 @@ async function notifyFamily(
   return { sent, errors }
 }
 
-Deno.serve(async () => {
+type ActivityType = 'milk' | 'poop' | 'appeton' | 'direct_feed'
+
+interface ActivityPayload {
+  type: ActivityType
+  familyId: string
+  oz?: number
+  milkType?: string
+}
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type',
+}
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  })
+}
+
+function activityMessage(activity: ActivityPayload) {
+  switch (activity.type) {
+    case 'milk': {
+      const amount =
+        typeof activity.oz === 'number' && activity.oz > 0
+          ? `${activity.oz}oz`
+          : 'Milk'
+      const milkType =
+        activity.milkType === 'FM' || activity.milkType === 'EBM'
+          ? ` ${activity.milkType}`
+          : ''
+      return {
+        title: '🍼 Milk logged',
+        body: `${amount}${milkType} was logged for Idris.`,
+        tag: 'anaqi-activity-milk',
+      }
+    }
+    case 'poop':
+      return {
+        title: '💩 Poop logged',
+        body: 'Poop was logged for Idris.',
+        tag: 'anaqi-activity-poop',
+      }
+    case 'appeton':
+      return {
+        title: '💊 Appeton logged',
+        body: 'Idris has taken Appeton.',
+        tag: 'anaqi-activity-appeton',
+      }
+    case 'direct_feed':
+      return {
+        title: '👶 Direct feed logged',
+        body: 'A direct feed was logged for Idris.',
+        tag: 'anaqi-activity-direct-feed',
+      }
+  }
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: CORS_HEADERS })
+  }
+
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
+
+  let requestBody: { activity?: ActivityPayload } = {}
+  try {
+    requestBody = await req.json()
+  } catch {
+    // Scheduled reminder calls may send an empty body.
+  }
+
+  if (requestBody.activity) {
+    const activity = requestBody.activity
+    const allowedTypes: ActivityType[] = [
+      'milk',
+      'poop',
+      'appeton',
+      'direct_feed',
+    ]
+    if (!activity.familyId || !allowedTypes.includes(activity.type)) {
+      return jsonResponse({ ok: false, error: 'Invalid activity payload' }, 400)
+    }
+
+    const jwt = (req.headers.get('Authorization') ?? '').replace(
+      /^Bearer\s+/i,
+      '',
+    )
+    const { data: authData, error: authError } =
+      await supabase.auth.getUser(jwt)
+    if (authError || !authData.user) {
+      return jsonResponse({ ok: false, error: 'Unauthorized' }, 401)
+    }
+
+    const { data: membership } = await supabase
+      .from('family_members')
+      .select('family_id')
+      .eq('family_id', activity.familyId)
+      .eq('user_id', authData.user.id)
+      .maybeSingle()
+    if (!membership) {
+      return jsonResponse({ ok: false, error: 'Not a family member' }, 403)
+    }
+
+    const activityProjectId = Deno.env.get('FIREBASE_PROJECT_ID')
+    const activityClientEmail = Deno.env.get('FIREBASE_CLIENT_EMAIL')
+    const activityPrivateKey = Deno.env.get('FIREBASE_PRIVATE_KEY')
+    if (!activityProjectId || !activityClientEmail || !activityPrivateKey) {
+      return jsonResponse({ ok: false, error: 'Missing Firebase secrets' }, 500)
+    }
+
+    const activityAccessToken = await getAccessToken(
+      activityClientEmail,
+      activityPrivateKey,
+    )
+    const message = activityMessage(activity)
+    const result = await notifyFamily(
+      supabase,
+      activityAccessToken,
+      activityProjectId,
+      activity.familyId,
+      message.title,
+      message.body,
+      FEED_ICON,
+      message.tag,
+      authData.user.id,
+    )
+
+    return jsonResponse({ ok: true, ...result })
+  }
 
   const projectId = Deno.env.get('FIREBASE_PROJECT_ID')
   const clientEmail = Deno.env.get('FIREBASE_CLIENT_EMAIL')

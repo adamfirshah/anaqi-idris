@@ -43,22 +43,37 @@ import {
 } from "../types/database";
 import { usePushNotifications } from "../hooks/usePushNotifications";
 import { showLocalNotification } from "../lib/push";
+import { notifyFamilyOfActivity } from "../lib/activityNotifications";
 import PumpTracker from "./PumpTracker";
 import "../App.css";
 import "../Auth.css";
 
 const FEED_INTERVAL_MS = 2 * 60 * 60 * 1000;
+const LOW_AMOUNT_FEED_INTERVAL_MS = 60 * 60 * 1000;
 const PREPARE_WARN_MS = 60 * 60 * 1000;
-const QUICK_OZ = [2, 2.5, 3, 3.5, 4];
+const QUICK_OZ = [0.5, 1, 1.5, 2, 2.5, 3];
 const MILK_TYPES = ["FM", "EBM"] as const;
 const FORGOT_AGO_MIN = [15, 30, 45, 60] as const;
 const APPOINTMENT_LOCATIONS = ["Dr. Kent Avisena", "KK Cyberjaya"] as const;
 
 type Status = "none" | "ok" | "prepare" | "overdue";
 
-function getStatus(lastTs: number | null, now: number): Status {
+function getFeedIntervalMs(
+  oz: number,
+  milkType: MilkType | "" | null,
+): number {
+  return milkType === "EBM" || (oz > 0 && oz <= 1)
+    ? LOW_AMOUNT_FEED_INTERVAL_MS
+    : FEED_INTERVAL_MS;
+}
+
+function getStatus(
+  lastTs: number | null,
+  intervalMs: number,
+  now: number,
+): Status {
   if (!lastTs) return "none";
-  const remaining = FEED_INTERVAL_MS - (now - lastTs);
+  const remaining = intervalMs - (now - lastTs);
   if (remaining < 0) return "overdue";
   if (remaining <= PREPARE_WARN_MS) return "prepare";
   return "ok";
@@ -563,6 +578,11 @@ export default function MilkTracker({
       ) {
         setError(insertError.message);
       }
+    } else {
+      void notifyFamilyOfActivity({
+        type: "appeton",
+        familyId: family.familyId,
+      });
     }
   }, [family.familyId, session.user.id]);
 
@@ -734,14 +754,17 @@ export default function MilkTracker({
   const waitingForCue =
     lastDirectFeed != null &&
     (!lastFeeding || lastDirectFeed.timestamp > lastFeeding.timestamp);
+  const feedIntervalMs = lastFeeding
+    ? getFeedIntervalMs(lastFeeding.oz, lastFeeding.milkType)
+    : FEED_INTERVAL_MS;
   const nextFeedTs =
     lastFeeding && !waitingForCue
-      ? lastFeeding.timestamp + FEED_INTERVAL_MS
+      ? lastFeeding.timestamp + feedIntervalMs
       : null;
   const remaining = nextFeedTs ? nextFeedTs - now : null;
   const status = waitingForCue
     ? "cue"
-    : getStatus(lastFeeding?.timestamp ?? null, now);
+    : getStatus(lastFeeding?.timestamp ?? null, feedIntervalMs, now);
   const countdown = remaining !== null ? formatCountdown(remaining) : null;
 
   const todayFeedings = feedings.filter(
@@ -772,6 +795,10 @@ export default function MilkTracker({
     appointments
       .filter((a) => a.appointmentAt >= startOfToday.getTime())
       .sort((a, b) => a.appointmentAt - b.appointmentAt)[0] ?? null;
+  const latestAppointment =
+    [...appointments].sort(
+      (a, b) => b.appointmentAt - a.appointmentAt,
+    )[0] ?? null;
 
   const pastFeedings = feedings.filter(
     (f) => new Date(f.timestamp).toDateString() !== todayStr(),
@@ -850,6 +877,12 @@ export default function MilkTracker({
         `Logged at ${formatTime(loggedAtTs)} · ${parsed}oz${noteParts ? ` · ${noteParts}` : ""}`,
         "anaqi-feed-logged",
       );
+      void notifyFamilyOfActivity({
+        type: "milk",
+        familyId: family.familyId,
+        oz: parsed,
+        milkType: milkType || null,
+      });
     },
     [oz, milkType, note, family.familyId, session.user.id, fetchFeedings],
   );
@@ -892,6 +925,10 @@ export default function MilkTracker({
         `${poopDisplayText("Poo")} at ${formatTime(loggedAtTs)}`,
         "anaqi-poop-logged",
       );
+      void notifyFamilyOfActivity({
+        type: "poop",
+        familyId: family.familyId,
+      });
     },
     [family.familyId, session.user.id, fetchPoopLogs],
   );
@@ -951,6 +988,10 @@ export default function MilkTracker({
     setDirectFeeds((prev) => {
       const withoutTemp = prev.filter((feed) => feed.id !== tempId);
       return mergeDirectFeeds(family.familyId, withoutTemp, [saved]);
+    });
+    void notifyFamilyOfActivity({
+      type: "direct_feed",
+      familyId: family.familyId,
     });
   }, [family.familyId, session.user.id]);
 
@@ -1059,14 +1100,7 @@ export default function MilkTracker({
       </div>
 
       {person === "mummy" ? (
-        <PumpTracker
-          session={session}
-          family={family}
-          directFeeds={directFeeds}
-          onLogDirectFeed={logDirectFeed}
-          directFeedSaving={directFeedSaving}
-          onRemoveDirectFeed={removeDirectFeed}
-        />
+        <PumpTracker session={session} family={family} />
       ) : (
         <>
           {error && (
@@ -1262,8 +1296,13 @@ export default function MilkTracker({
                     {nextAppointment.location}
                   </span>
                 </>
+              ) : latestAppointment ? (
+                <span className="growth-collapse-metrics">
+                  Latest: {formatGrowthDate(latestAppointment.appointmentAt)} ·{" "}
+                  {latestAppointment.location}
+                </span>
               ) : (
-                <span className="growth-collapse-summary">No upcoming</span>
+                <span className="growth-collapse-summary">No appointments</span>
               )}
               <span className="growth-collapse-chevron" aria-hidden>
                 {appointmentsOpen ? "▾" : "▸"}
@@ -1395,9 +1434,12 @@ export default function MilkTracker({
               <>
                 <p className="cd-label">🤱 Idris just had Direct feed</p>
                 <p className="cd-time cd-time-cue">Watch for cue</p>
-                <p className="cd-sub">
-                  Feed when Idris shows hunger cues
-                </p>
+                {lastFeeding && (
+                  <p className="cd-sub">
+                    Supposed next bottle feed{" "}
+                    {formatTime(lastFeeding.timestamp + feedIntervalMs)}
+                  </p>
+                )}
               </>
             )}
 
@@ -1415,7 +1457,7 @@ export default function MilkTracker({
               nextFeedTs &&
               (() => {
                 const prepareTs =
-                  lastFeeding.timestamp + FEED_INTERVAL_MS - PREPARE_WARN_MS;
+                  lastFeeding.timestamp + feedIntervalMs - PREPARE_WARN_MS;
                 const cd = formatCountdown(prepareTs - now);
                 return (
                   <>
@@ -1508,12 +1550,18 @@ export default function MilkTracker({
               </p>
             </div>
             <div className="stat-box stat-box-highlight">
-              <span
-                className={`stat-value ${waitingForCue ? "stat-value-cue" : ""}`}
-              >
-                {waitingForCue ? "Waiting for Cue" : nextFeedTs ? formatTime(nextFeedTs) : "—"}
+              <span className="stat-value">
+                {waitingForCue
+                  ? lastFeeding
+                    ? formatTime(lastFeeding.timestamp + feedIntervalMs)
+                    : "—"
+                  : nextFeedTs
+                    ? formatTime(nextFeedTs)
+                    : "—"}
               </span>
-              <p className="stat-label">Next feed</p>
+              <p className="stat-label">
+                {waitingForCue ? "Est next bottle feed" : "Next feed"}
+              </p>
             </div>
           </div>
 
@@ -1709,7 +1757,11 @@ export default function MilkTracker({
                       {oz}oz at {formatTime(forgotTs)}
                     </span>
                     <span className="time-preview-next">
-                      → next feed ~{formatTime(forgotTs + FEED_INTERVAL_MS)}
+                      → next feed ~
+                      {formatTime(
+                        forgotTs +
+                          getFeedIntervalMs(parseFloat(oz) || 0, milkType),
+                      )}
                     </span>
                 </div>
                 <button
