@@ -51,7 +51,7 @@ import "../Auth.css";
 const FEED_INTERVAL_MS = 2 * 60 * 60 * 1000;
 const LOW_AMOUNT_FEED_INTERVAL_MS = 60 * 60 * 1000;
 const PREPARE_WARN_MS = 60 * 60 * 1000;
-const QUICK_OZ = [0.5, 1, 1.5, 2, 2.5, 3];
+const QUICK_OZ = ["2.0", "2.5", "3.0", "3.5", "4.0"] as const;
 const MILK_TYPES = ["FM", "EBM"] as const;
 const FORGOT_AGO_MIN = [15, 30, 45, 60] as const;
 const APPOINTMENT_LOCATIONS = ["Dr. Kent Avisena", "KK Cyberjaya"] as const;
@@ -88,6 +88,12 @@ function dayMilkTotals(items: Feeding[]) {
       return acc;
     },
     { total: 0, ebm: 0, fm: 0 },
+  );
+}
+
+function upsertFeeding(items: Feeding[], feeding: Feeding): Feeding[] {
+  return [...items.filter((item) => item.id !== feeding.id), feeding].sort(
+    (a, b) => a.timestamp - b.timestamp,
   );
 }
 
@@ -614,18 +620,22 @@ export default function MilkTracker({
 
   const fetchFeedings = useCallback(async () => {
     const { data, error: fetchError } = await supabase
-      .from("feedings")
-      .select("*")
-      .order("logged_at", { ascending: true });
+      .rpc("get_family_feedings", { p_family_id: family.familyId })
+      .order("logged_at", { ascending: false })
+      .limit(1000);
 
     if (fetchError) {
       setError(fetchError.message);
       return;
     }
 
-    setFeedings((data as FeedingRow[]).map(rowToFeeding));
+    setFeedings(
+      ((data as FeedingRow[] | null) ?? [])
+        .map(rowToFeeding)
+        .sort((a, b) => a.timestamp - b.timestamp),
+    );
     setLoading(false);
-  }, []);
+  }, [family.familyId]);
 
   const fetchPoopLogs = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -675,8 +685,30 @@ export default function MilkTracker({
       .channel("feedings-changes")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "feedings" },
-        () => fetchFeedings(),
+        {
+          event: "*",
+          schema: "public",
+          table: "feedings",
+          filter: `family_id=eq.${family.familyId}`,
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const deletedId = (payload.old as Partial<FeedingRow>).id;
+            if (deletedId) {
+              setFeedings((previous) =>
+                previous.filter((feeding) => feeding.id !== deletedId),
+              );
+            }
+            return;
+          }
+
+          const row = payload.new as FeedingRow;
+          if (row.family_id === family.familyId) {
+            setFeedings((previous) =>
+              upsertFeeding(previous, rowToFeeding(row)),
+            );
+          }
+        },
       )
       .subscribe();
 
@@ -851,25 +883,30 @@ export default function MilkTracker({
       if (!parsed || parsed <= 0 || parsed > 10) return;
 
       setError("");
-      const { error: insertError } = await supabase.from("feedings").insert({
-        family_id: family.familyId,
-        logged_at: new Date(loggedAtTs).toISOString(),
-        oz: parsed,
-        milk_type: milkType || null,
-        note: note.trim() || null,
-        logged_by: session.user.id,
-      });
+      const { data: insertedRow, error: insertError } = await supabase
+        .from("feedings")
+        .insert({
+          family_id: family.familyId,
+          logged_at: new Date(loggedAtTs).toISOString(),
+          oz: parsed,
+          milk_type: milkType || null,
+          note: note.trim() || null,
+          logged_by: session.user.id,
+        })
+        .select("*")
+        .single();
 
-      if (insertError) {
-        setError(insertError.message);
+      if (insertError || !insertedRow) {
+        setError(insertError?.message ?? "Supabase did not confirm the saved feed.");
         return;
       }
 
+      const savedFeeding = rowToFeeding(insertedRow as FeedingRow);
+      setFeedings((previous) => upsertFeeding(previous, savedFeeding));
       setNote("");
       setForgotOpen(false);
       setJustLogged(true);
       setTimeout(() => setJustLogged(false), 2000);
-      fetchFeedings();
 
       const noteParts = [milkType, note.trim()].filter(Boolean).join(" · ");
       await showLocalNotification(
@@ -884,7 +921,7 @@ export default function MilkTracker({
         milkType: milkType || null,
       });
     },
-    [oz, milkType, note, family.familyId, session.user.id, fetchFeedings],
+    [oz, milkType, note, family.familyId, session.user.id],
   );
 
   const removeFeeding = useCallback(
@@ -1020,9 +1057,7 @@ export default function MilkTracker({
   );
 
   const forgotTs = todayTimeInputToTimestamp(forgotTime);
-  const forgotValid =
-    forgotTs <= Date.now() &&
-    (!lastFeeding || forgotTs > lastFeeding.timestamp);
+  const forgotValid = forgotTs <= Date.now();
 
   if (loading) {
     return (
@@ -1636,8 +1671,8 @@ export default function MilkTracker({
                 <button
                   key={q}
                   type="button"
-                  className={`oz-btn ${oz === String(q) ? "active" : ""}`}
-                  onClick={() => setOz(String(q))}
+                  className={`oz-btn ${oz === q ? "active" : ""}`}
+                  onClick={() => setOz(q)}
                 >
                   {q}oz
                 </button>
@@ -1705,6 +1740,8 @@ export default function MilkTracker({
               {justLogged ? "✓ Logged!" : "🍼 Log Feed Now"}
             </button>
 
+            {error && <p className="auth-error">{error}</p>}
+
             <button
               type="button"
               className="forgot-toggle"
@@ -1746,9 +1783,9 @@ export default function MilkTracker({
                     Masa susu sepatutnya {formatTime(nextFeedTs)}
                   </p>
                 )}
-                {!forgotValid && lastFeeding && (
+                {!forgotValid && (
                   <p className="forgot-error">
-                    Ambil masa lepas {formatTime(lastFeeding.timestamp)} and not before
+                    Pick a time that is not in the future
                   </p>
                 )}
                 <div className="time-preview">
@@ -1899,7 +1936,11 @@ export default function MilkTracker({
                       </div>
                     )}
 
-                    <ul className="feeding-list feed-list-v2">
+                    <ul
+                      className={`feeding-list feed-list-v2 ${
+                        selectedActivity.length > 10 ? "feed-list-scroll" : ""
+                      }`}
+                    >
                       {[...selectedActivity].reverse().map((item, i, arr) => {
                         const prevItem = arr[i + 1];
                         const prevTs = prevItem ? activityTimestamp(prevItem) : null;
@@ -2033,10 +2074,6 @@ export default function MilkTracker({
           </div>
         </>
       )}
-
-      <p className="sync-status">
-        Synced with Supabase · updates live for both phones
-      </p>
     </div>
   );
 }

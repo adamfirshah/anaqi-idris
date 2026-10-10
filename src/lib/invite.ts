@@ -6,27 +6,48 @@ export function getSavedInviteCode() {
   return localStorage.getItem(INVITE_CODE_KEY)
 }
 
+async function signInAsGuest() {
+  const { error } = await supabase.auth.signInAnonymously()
+  if (!error) return
+
+  if (error.message.toLowerCase().includes('anonymous')) {
+    throw new Error(
+      'Anonymous sign-ins are disabled. In Supabase: Authentication → Sign In / Providers → Anonymous → Enable → Save.',
+    )
+  }
+  throw new Error(error.message)
+}
+
 export async function joinWithInviteCode(code: string) {
   const normalized = code.trim().toUpperCase()
   if (!normalized) throw new Error('Please enter an invite code')
 
   const { data: sessionData } = await supabase.auth.getSession()
   if (!sessionData.session) {
-    const { error: authError } = await supabase.auth.signInAnonymously()
-    if (authError) {
-      if (authError.message.toLowerCase().includes('anonymous')) {
-        throw new Error(
-          'Anonymous sign-ins are disabled. In Supabase: Authentication → Sign In / Providers → Anonymous → Enable → Save.',
-        )
-      }
-      throw authError
-    }
+    await signInAsGuest()
   }
 
-  const { error: joinError } = await supabase.rpc('join_family_by_code', {
+  let { error: joinError } = await supabase.rpc('join_family_by_code', {
     p_invite_code: normalized,
   })
-  if (joinError) throw joinError
+
+  // A previously cached guest token can become unusable after backend clock
+  // corrections. Replace it locally and retry once with a freshly issued JWT.
+  if (joinError?.message.toLowerCase().includes('jwt issued at future')) {
+    await supabase.auth.signOut({ scope: 'local' })
+    await signInAsGuest()
+    const retry = await supabase.rpc('join_family_by_code', {
+      p_invite_code: normalized,
+    })
+    joinError = retry.error
+  }
+
+  if (joinError) {
+    const message = joinError.message.toLowerCase().includes('join_family_by_code')
+      ? 'Family joining is not configured in Supabase yet.'
+      : joinError.message
+    throw new Error(message)
+  }
 
   localStorage.setItem(INVITE_CODE_KEY, normalized)
 }

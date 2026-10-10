@@ -845,6 +845,14 @@
   gap: 0.4rem;
 }
 
+.feed-list-scroll {
+  max-height: 46rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 0.25rem;
+}
+
 .feeding-item { display: flex; flex-direction: column; gap: 0.25rem; }
 
 /* gap indicator between feedings */
