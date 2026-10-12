@@ -49,8 +49,8 @@ const FEED_REMINDERS: Record<FeedReminderType, { title: string; body: string }> 
 }
 
 const PUMP_REMINDER = {
-  title: 'Mummy, tak pump lagi kan?',
-  body: 'Pump la nanti bengkak sakit pula...',
+  title: 'Ready to pump',
+  body: '',
 }
 
 function inWindow(value: number, targetMs: number) {
