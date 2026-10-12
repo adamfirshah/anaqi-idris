@@ -773,6 +773,7 @@ export default function MilkTracker({
     fetchPoopLogs,
     fetchDirectFeeds,
     fetchAppointments,
+    family.familyId,
   ]);
 
   useEffect(() => {

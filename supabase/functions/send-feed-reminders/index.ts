@@ -9,10 +9,17 @@
 // Optional secret for notification icons on iOS:
 //   supabase secrets set APP_URL=https://your-app.vercel.app
 
+// @ts-expect-error Deno resolves URL imports at runtime.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined
+  }
+  serve(handler: (request: Request) => Response | Promise<Response>): void
+}
+
 const FEED_INTERVAL_MS = 2 * 60 * 60 * 1000
-const PREPARE_WARN_MS = 60 * 60 * 1000
 const FORGOT_LOG_AFTER_MS = 15 * 60 * 1000
 const CRON_WINDOW_MS = 5 * 60 * 1000   // 5-min window so cron doesn't miss the 1-min slot
 const FEED_ICON = iconUrl('/icon.png')
@@ -23,29 +30,21 @@ function iconUrl(path: string) {
   return base ? `${base}${path}` : path
 }
 
-type FeedReminderType = 'prepare_15' | 'prepare_10' | 'prepare_30' | 'overdue' | 'forgot_log'
+type FeedReminderType = 'prepare_30' | 'overdue' | 'forgot_log'
 type PumpReminderType = 'pump_2h' | 'pump_3h' | 'pump_4h'
 
 const FEED_REMINDERS: Record<FeedReminderType, { title: string; body: string }> = {
-  prepare_15: {
-    title: '⏱️ Prep susu in 15 min',
-    body: 'Babah & Mummy - standby Anaqi lapor.',
-  },
-  prepare_10: {
-    title: '⏱️ Prep susu in 10 min',
-    body: 'Lagi 10 min nak sejam - bancuh awal tak kalut.',
-  },
   prepare_30: {
-    title: '⏱️ Lagi 30 min nak feed',
-    body: 'Dah setengah jam prep time — susu dah ready?',
+    title: '30 minutes before feeding time',
+    body: 'Susu should be prepare now',
   },
   overdue: {
-    title: '🍼 Babah & Mummy, time to feed Anaqi!',
-    body: '2 hours since last feed — susu time now.',
+    title: 'Feeding time',
+    body: '',
   },
   forgot_log: {
-    title: '🍼 Ha lupa la tuuu..',
-    body: 'Feed time was 15 min ago — log now if Anaqi already fed.',
+    title: 'Reminder - please log Idris milk',
+    body: '',
   },
 }
 
@@ -58,9 +57,7 @@ function inWindow(value: number, targetMs: number) {
   return value <= targetMs && value > targetMs - CRON_WINDOW_MS
 }
 
-function pickFeedReminder(remaining: number, msUntilPrepare: number): FeedReminderType | null {
-  if (inWindow(msUntilPrepare, 15 * 60_000)) return 'prepare_15'
-  if (inWindow(msUntilPrepare, 10 * 60_000)) return 'prepare_10'
+function pickFeedReminder(remaining: number): FeedReminderType | null {
   if (inWindow(remaining, 30 * 60_000)) return 'prepare_30'
   if (inWindow(-remaining, 0)) return 'overdue'
   if (inWindow(-remaining, FORGOT_LOG_AFTER_MS)) return 'forgot_log'
@@ -383,8 +380,7 @@ Deno.serve(async (req: Request) => {
     if (lastFeed) {
       const lastTs = new Date(lastFeed.logged_at).getTime()
       const remaining = FEED_INTERVAL_MS - (now - lastTs)
-      const msUntilPrepare = remaining - PREPARE_WARN_MS
-      const feedReminderType = pickFeedReminder(remaining, msUntilPrepare)
+      const feedReminderType = pickFeedReminder(remaining)
 
       if (feedReminderType) {
         const { data: alreadySent } = await supabase
