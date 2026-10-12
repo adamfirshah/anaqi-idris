@@ -62,6 +62,7 @@ function getFeedIntervalMs(
   oz: number,
   milkType: MilkType | "" | null,
 ): number {
+  if (milkType === "EBM" && oz >= 3) return FEED_INTERVAL_MS;
   return milkType === "EBM" || (oz > 0 && oz <= 1)
     ? LOW_AMOUNT_FEED_INTERVAL_MS
     : FEED_INTERVAL_MS;
@@ -1135,7 +1136,16 @@ export default function MilkTracker({
       </div>
 
       {person === "mummy" ? (
-        <PumpTracker session={session} family={family} />
+        <PumpTracker
+          session={session}
+          family={family}
+          directFeeds={directFeeds}
+          lastDirectFeed={lastDirectFeed}
+          waitingForCue={waitingForCue}
+          lastBottleFeedTs={lastFeeding?.timestamp ?? null}
+          feedIntervalMs={feedIntervalMs}
+          onRemoveDirectFeed={removeDirectFeed}
+        />
       ) : (
         <>
           {error && (

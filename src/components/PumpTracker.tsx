@@ -12,6 +12,7 @@ import {
   todayTimeInputToTimestamp,
 } from '../lib/format'
 import type {
+  DirectFeedLog,
   FamilyInfo,
   PumpSession,
   PumpSessionRow,
@@ -36,11 +37,27 @@ function getStatus(lastTs: number | null, now: number): Status {
 interface Props {
   session: Session
   family: FamilyInfo
+  directFeeds: DirectFeedLog[]
+  lastDirectFeed: DirectFeedLog | null
+  waitingForCue: boolean
+  lastBottleFeedTs: number | null
+  feedIntervalMs: number
+  onRemoveDirectFeed: (id: string) => void
 }
+
+type PumpLogItem =
+  | { kind: 'session'; session: PumpSession; timestamp: number }
+  | { kind: 'direct_feed'; feed: DirectFeedLog; timestamp: number }
 
 export default function PumpTracker({
   session,
   family,
+  directFeeds,
+  lastDirectFeed,
+  waitingForCue,
+  lastBottleFeedTs,
+  feedIntervalMs,
+  onRemoveDirectFeed,
 }: Props) {
   const [sessions, setSessions] = useState<PumpSession[]>([])
   const [loading, setLoading] = useState(true)
@@ -53,8 +70,6 @@ export default function PumpTracker({
   const [forgotOpen, setForgotOpen] = useState(false)
   const [forgotTime, setForgotTime] = useState(() => toTimeInputValue(Date.now() - 30 * 60 * 1000))
   const [error, setError] = useState('')
-  const [latestPitcherAt, setLatestPitcherAt] = useState<number | null>(null)
-  const [pitcherSaving, setPitcherSaving] = useState(false)
 
   const fetchSessions = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -69,25 +84,6 @@ export default function PumpTracker({
     }
     setLoading(false)
   }, [])
-
-  const fetchLatestPitcherMethod = useCallback(async () => {
-    const { data, error: fetchError } = await supabase
-      .from('pitcher_method_logs')
-      .select('completed_at')
-      .eq('family_id', family.familyId)
-      .order('completed_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (fetchError) {
-      setError(fetchError.message)
-      return
-    }
-
-    setLatestPitcherAt(
-      data?.completed_at ? new Date(data.completed_at).getTime() : null,
-    )
-  }, [family.familyId])
 
   useEffect(() => {
     fetchSessions()
@@ -107,68 +103,45 @@ export default function PumpTracker({
   }, [fetchSessions])
 
   useEffect(() => {
-    fetchLatestPitcherMethod()
-
-    const pitcherChannel = supabase
-      .channel('pitcher-method-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'pitcher_method_logs',
-          filter: `family_id=eq.${family.familyId}`,
-        },
-        () => fetchLatestPitcherMethod(),
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(pitcherChannel)
-    }
-  }, [family.familyId, fetchLatestPitcherMethod])
-
-  useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(id)
   }, [])
 
   const lastSession = sessions.length > 0 ? sessions[sessions.length - 1] : null
-  const nextPumpTs = lastSession ? lastSession.timestamp + PUMP_INTERVAL_MS : null
+  const lastDirectTs = lastDirectFeed?.timestamp ?? null
+  const lastSessionTs = lastSession?.timestamp ?? null
+  const lastPumpAnchorTs =
+    lastDirectTs != null && (lastSessionTs == null || lastDirectTs > lastSessionTs)
+      ? lastDirectTs
+      : lastSessionTs
+  const lastWasDirectFeed =
+    lastDirectTs != null && lastPumpAnchorTs === lastDirectTs
+  const nextPumpTs =
+    lastPumpAnchorTs != null ? lastPumpAnchorTs + PUMP_INTERVAL_MS : null
   const remaining = nextPumpTs ? nextPumpTs - now : null
-  const status = getStatus(lastSession?.timestamp ?? null, now)
+  const status = getStatus(lastPumpAnchorTs, now)
   const countdown = remaining !== null ? formatCountdown(remaining) : null
 
   const todaySessions = sessions.filter(
     s => new Date(s.timestamp).toDateString() === todayStr(),
   )
   const dailyOz = todaySessions.reduce((sum, s) => sum + s.oz, 0)
-  const latestPumpDay = new Date(lastSession?.timestamp ?? Date.now())
-  const threeDayStart = new Date(latestPumpDay)
-  threeDayStart.setHours(0, 0, 0, 0)
-  threeDayStart.setDate(threeDayStart.getDate() - 2)
-  const threeDayEnd = new Date(latestPumpDay)
-  threeDayEnd.setHours(23, 59, 59, 999)
-  const threeDayTotalOz = sessions
-    .filter(
-      s =>
-        s.timestamp >= threeDayStart.getTime() &&
-        s.timestamp <= threeDayEnd.getTime() &&
-        (latestPitcherAt == null || s.timestamp > latestPitcherAt),
-    )
-    .reduce((sum, s) => sum + s.oz, 0)
-
-  const pastSessions = sessions.filter(
-    s => new Date(s.timestamp).toDateString() !== todayStr(),
+  const todayDirectFeeds = directFeeds.filter(
+    s => new Date(s.timestamp).toDateString() === todayStr(),
   )
-  const grouped = pastSessions.reduce<Record<string, PumpSession[]>>((acc, s) => {
+  const todayActivityCount = todaySessions.length + todayDirectFeeds.length
+
+  const grouped = sessions.reduce<Record<string, PumpSession[]>>((acc, s) => {
     const k = new Date(s.timestamp).toDateString()
     ;(acc[k] ??= []).push(s)
     return acc
   }, {})
 
   const allDateKeys = [
-    ...new Set(sessions.map((s) => new Date(s.timestamp).toDateString())),
+    ...new Set([
+      ...sessions.map((s) => new Date(s.timestamp).toDateString()),
+      ...directFeeds.map((f) => new Date(f.timestamp).toDateString()),
+    ]),
   ].sort((a, b) => new Date(b).getTime() - new Date(a).getTime())
 
   const pastDates = allDateKeys.filter((k) => k !== todayStr())
@@ -179,8 +152,23 @@ export default function PumpTracker({
   const selectedSessions = sessions.filter(
     s => new Date(s.timestamp).toDateString() === selectedDateKey,
   )
+  const selectedDirectFeeds = directFeeds.filter(
+    f => new Date(f.timestamp).toDateString() === selectedDateKey,
+  )
+  const selectedLog: PumpLogItem[] = [
+    ...selectedSessions.map((sessionItem) => ({
+      kind: 'session' as const,
+      session: sessionItem,
+      timestamp: sessionItem.timestamp,
+    })),
+    ...selectedDirectFeeds.map((feed) => ({
+      kind: 'direct_feed' as const,
+      feed,
+      timestamp: feed.timestamp,
+    })),
+  ].sort((a, b) => a.timestamp - b.timestamp)
   const selectedTotal = selectedSessions.reduce((sum, s) => sum + s.oz, 0)
-  const hasSelectedActivity = selectedSessions.length > 0
+  const hasSelectedActivity = selectedLog.length > 0
 
   const logSession = useCallback(async (loggedAtTs: number) => {
     const parsed = parseFloat(oz)
@@ -223,33 +211,6 @@ export default function PumpTracker({
     [fetchSessions],
   )
 
-  const completePitcherMethod = useCallback(async () => {
-    if (threeDayTotalOz < 20 || pitcherSaving) return
-
-    setError('')
-    setPitcherSaving(true)
-    const { data, error: insertError } = await supabase
-      .from('pitcher_method_logs')
-      .insert({
-        family_id: family.familyId,
-        logged_by: session.user.id,
-      })
-      .select('completed_at')
-      .single()
-
-    if (insertError) {
-      setError(insertError.message)
-    } else {
-      setLatestPitcherAt(new Date(data.completed_at).getTime())
-    }
-    setPitcherSaving(false)
-  }, [
-    family.familyId,
-    pitcherSaving,
-    session.user.id,
-    threeDayTotalOz,
-  ])
-
   if (loading) {
     return (
       <div className="pump-loading">
@@ -262,8 +223,38 @@ export default function PumpTracker({
     <>
       {error && <p className="auth-error" style={{ marginBottom: '0.75rem' }}>{error}</p>}
 
-      <div className={`card countdown-card pump-card status-${status}`}>
-        {status === 'none' && (
+      <div className={`card countdown-card pump-card status-${waitingForCue && lastWasDirectFeed && status === 'ok' ? 'cue' : status}`}>
+        {waitingForCue && lastDirectFeed && lastWasDirectFeed && status === 'ok' && nextPumpTs && lastPumpAnchorTs != null && (
+          <>
+            <p className="cd-label">🤱 Idris just had Direct feed</p>
+            <p className="cd-time cd-time-cue">Watch for cue</p>
+            {(() => {
+              const dueTs = lastPumpAnchorTs + PUMP_INTERVAL_MS - PUMP_WARN_MS
+              const cd = formatCountdown(dueTs - now)
+              return (
+                <div className="cd-rows">
+                  <div className="cd-row">
+                    <span>Next pump in</span>
+                    <span>
+                      {cd.h > 0 ? `${cd.h}h ` : ''}{cd.m}m
+                    </span>
+                  </div>
+                  <div className="cd-row"><span>Last direct feed</span><span>{formatTime(lastDirectFeed.timestamp)}</span></div>
+                  <div className="cd-row"><span>Next pump</span><span>{formatTime(nextPumpTs)}</span></div>
+                  <div className="cd-row"><span>Since last</span><span>{formatElapsed(now - lastDirectFeed.timestamp)}</span></div>
+                </div>
+              )
+            })()}
+            {lastBottleFeedTs && (
+              <p className="cd-sub">
+                Supposed next bottle feed{" "}
+                {formatTime(lastBottleFeedTs + feedIntervalMs)}
+              </p>
+            )}
+          </>
+        )}
+
+        {status === 'none' && !(waitingForCue && lastWasDirectFeed) && (
           <>
             <p className="cd-label">No pump sessions yet</p>
             <p className="cd-time">—</p>
@@ -271,8 +262,8 @@ export default function PumpTracker({
           </>
         )}
 
-        {status === 'ok' && lastSession && nextPumpTs && (() => {
-          const dueTs = lastSession.timestamp + PUMP_INTERVAL_MS - PUMP_WARN_MS
+        {status === 'ok' && lastPumpAnchorTs != null && nextPumpTs && !(waitingForCue && lastWasDirectFeed) && (() => {
+          const dueTs = lastPumpAnchorTs + PUMP_INTERVAL_MS - PUMP_WARN_MS
           const cd = formatCountdown(dueTs - now)
           return (
             <>
@@ -282,9 +273,12 @@ export default function PumpTracker({
                 <span>{cd.m}</span><small> m</small>
               </p>
               <div className="cd-rows">
-                <div className="cd-row"><span>Last pumped</span><span>{formatTime(lastSession.timestamp)}</span></div>
-                <div className="cd-row"><span>Next pump ~</span><span>{formatTime(nextPumpTs)}</span></div>
-                <div className="cd-row"><span>Since last</span><span>{formatElapsed(now - lastSession.timestamp)}</span></div>
+                <div className="cd-row">
+                  <span>{lastWasDirectFeed ? 'Last direct feed' : 'Last pumped'}</span>
+                  <span>{formatTime(lastPumpAnchorTs)}</span>
+                </div>
+                <div className="cd-row"><span>Next pump</span><span>{formatTime(nextPumpTs)}</span></div>
+                <div className="cd-row"><span>Since last</span><span>{formatElapsed(now - lastPumpAnchorTs)}</span></div>
               </div>
             </>
           )
@@ -292,18 +286,22 @@ export default function PumpTracker({
 
         {status === 'due' && countdown && nextPumpTs && (
           <>
+            {waitingForCue && lastWasDirectFeed && lastDirectFeed && (
+              <p className="cd-sub">Watch for cue · last direct feed {formatTime(lastDirectFeed.timestamp)}</p>
+            )}
             <p className="cd-label">🤱 Pump soon!</p>
             <p className="cd-time">
               {countdown.h > 0 && <><span>{countdown.h}</span><small>h </small></>}
               <span>{countdown.m}</span><small>m</small>
             </p>
             <p className="cd-sub">
-              next pump ~{formatTime(nextPumpTs)} · {countdown.m}m away
+              next pump{formatTime(nextPumpTs)} · {countdown.m}m away
+              {lastWasDirectFeed ? ' · from last direct feed' : ''}
             </p>
           </>
         )}
 
-        {status === 'overdue' && countdown && lastSession && (
+        {status === 'overdue' && countdown && lastPumpAnchorTs != null && (
           <>
             <p className="cd-label">Time to pump!</p>
             <p className="cd-time">
@@ -311,7 +309,7 @@ export default function PumpTracker({
               <span>{countdown.m}</span><small>m</small>
             </p>
             <p className="cd-sub">
-              last pumped {formatTime(lastSession.timestamp)} · {formatElapsed(now - lastSession.timestamp)} ago
+              {lastWasDirectFeed ? 'last direct feed' : 'last pumped'} {formatTime(lastPumpAnchorTs)} · {formatElapsed(now - lastPumpAnchorTs)} ago
             </p>
           </>
         )}
@@ -336,36 +334,15 @@ export default function PumpTracker({
         </div>
         <div className="stat-box pump-stat">
           <span className="stat-value">
-            {lastSession ? formatTime(lastSession.timestamp) : '—'}
+            {lastPumpAnchorTs ? formatTime(lastPumpAnchorTs) : '—'}
           </span>
-          <p className="stat-label">Last pump</p>
+          <p className="stat-label">{lastWasDirectFeed ? 'Last direct feed' : 'Last pump'}</p>
         </div>
         <div className="stat-box pump-stat">
           <span className="stat-value">
             {nextPumpTs ? formatTime(nextPumpTs) : '—'}
           </span>
           <p className="stat-label">Next pump</p>
-        </div>
-        <div className="stat-box stat-box-wide pump-stat pump-total-stat">
-          <span className="stat-value">{threeDayTotalOz.toFixed(1)}</span>
-          <span className="stat-unit">oz</span>
-          <p className="stat-label">
-            Total Oz · latest 3 days ({formatDate(threeDayStart.getTime())} –{" "}
-            {formatDate(threeDayEnd.getTime())})
-          </p>
-          {threeDayTotalOz >= 20 && (
-            <>
-              <p className="pump-ready-message">Ready for pitcher method</p>
-              <button
-                type="button"
-                className="pump-pitcher-done-btn"
-                disabled={pitcherSaving}
-                onClick={completePitcherMethod}
-              >
-                {pitcherSaving ? 'Saving…' : '✓ Pitcher method done'}
-              </button>
-            </>
-          )}
         </div>
       </div>
 
@@ -461,7 +438,7 @@ export default function PumpTracker({
               <span className="time-preview-label">Will log</span>
               <span className="time-preview-val">{oz}oz at {formatTime(forgotTs)}</span>
               <span className="time-preview-next">
-                → next pump ~
+                → next pump
                 {formatTime(forgotTs + PUMP_INTERVAL_MS)}
               </span>
             </div>
@@ -487,7 +464,7 @@ export default function PumpTracker({
           }}
         >
           Today
-          {todaySessions.length > 0 && <span className="tab-badge">{todaySessions.length}</span>}
+          {todayActivityCount > 0 && <span className="tab-badge">{todayActivityCount}</span>}
         </button>
         <button
           type="button"
@@ -516,6 +493,9 @@ export default function PumpTracker({
                     const dayItems = grouped[dk] ?? sessions.filter(
                       s => new Date(s.timestamp).toDateString() === dk,
                     )
+                    const dayDirectCount = directFeeds.filter(
+                      f => new Date(f.timestamp).toDateString() === dk,
+                    ).length
                     const dayTotal = dayItems.reduce((sum, s) => sum + s.oz, 0)
                     return (
                       <button
@@ -526,7 +506,7 @@ export default function PumpTracker({
                       >
                         <span className="date-pill-label">{formatDatePill(dk)}</span>
                         <span className="date-pill-oz">{dayTotal.toFixed(1)}oz</span>
-                        <span className="date-pill-count">{dayItems.length}x</span>
+                        <span className="date-pill-count">{dayItems.length + dayDirectCount}x</span>
                       </button>
                     )
                   })}
@@ -546,12 +526,18 @@ export default function PumpTracker({
                   <div className="day-hero-left">
                     <span className="day-hero-date">
                       {formatDate(
-                        selectedSessions[0]?.timestamp ?? Date.now(),
+                        selectedLog[0]?.timestamp ?? Date.now(),
                       )}
                     </span>
                     <span className="day-hero-count">
-                      {selectedSessions.length} session
-                      {selectedSessions.length !== 1 ? 's' : ''}
+                      {[
+                        selectedSessions.length > 0 &&
+                          `${selectedSessions.length} session${selectedSessions.length !== 1 ? 's' : ''}`,
+                        selectedDirectFeeds.length > 0 &&
+                          `${selectedDirectFeeds.length} direct feed${selectedDirectFeeds.length !== 1 ? 's' : ''}`,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </span>
                   </div>
                   <div className="day-hero-oz">
@@ -561,10 +547,10 @@ export default function PumpTracker({
                 </div>
 
                 <ul className="feeding-list feed-list-v2">
-                  {[...selectedSessions].reverse().map((s, i, arr) => {
-                    const prevSession = arr[i + 1]
-                    const prevTs = prevSession?.timestamp ?? null
-                    const ts = s.timestamp
+                  {[...selectedLog].reverse().map((item, i, arr) => {
+                    const prevItem = arr[i + 1]
+                    const prevTs = prevItem?.timestamp ?? null
+                    const ts = item.timestamp
                     const gap = prevTs ? ts - prevTs : null
                     const gapEl =
                       gap && activeTab === 'today' ? (
@@ -575,6 +561,33 @@ export default function PumpTracker({
                         </div>
                       ) : null
 
+                    if (item.kind === 'direct_feed') {
+                      const df = item.feed
+                      return (
+                        <li key={df.id} className="feeding-item">
+                          {gapEl}
+                          <div className="activity-log-row activity-direct-feed-row">
+                            <span className="activity-log-icon">👶</span>
+                            <div className="activity-log-meta">
+                              <span className="activity-log-text">
+                                Direct feed with Idris!
+                              </span>
+                              <span className="feed-time">{formatTime(df.timestamp)}</span>
+                            </div>
+                            <button
+                              type="button"
+                              className="remove-btn"
+                              onClick={() => onRemoveDirectFeed(df.id)}
+                              aria-label="Remove direct feed log"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    }
+
+                    const s = item.session
                     const displayNote = pumpDisplayNote(s)
                     return (
                       <li key={s.id} className="feeding-item">

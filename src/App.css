@@ -1212,39 +1212,10 @@
 .app-mummy .pump-card.status-ok      { background: linear-gradient(135deg, #ec4899, #be185d); }
 .app-mummy .pump-card.status-due     { background: linear-gradient(135deg, #f59e0b, #d97706); }
 .app-mummy .pump-card.status-overdue { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+.app-mummy .pump-card.status-cue     { background: linear-gradient(135deg, #14b8a6, #0d9488); }
 
 .app-mummy .pump-stat .stat-value,
 .app-mummy .pump-stat .stat-unit { color: #ec4899; }
-
-.app-mummy .pump-ready-message {
-  display: inline-block;
-  margin-top: 0.45rem;
-  padding: 0.25rem 0.65rem;
-  border-radius: 999px;
-  background: #dcfce7;
-  color: #15803d;
-  font-size: 0.75rem;
-  font-weight: 800;
-}
-
-.app-mummy .pump-pitcher-done-btn {
-  display: block;
-  width: 100%;
-  margin-top: 0.65rem;
-  padding: 0.65rem 0.85rem;
-  border: 0;
-  border-radius: 0.75rem;
-  background: #ec4899;
-  color: #fff;
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 800;
-  cursor: pointer;
-}
-.app-mummy .pump-pitcher-done-btn:disabled {
-  opacity: 0.65;
-  cursor: default;
-}
 
 .app-mummy .pump-oz-btn.active,
 .app-mummy .pump-side-btn.active { background: #ec4899; border-color: #ec4899; }
