@@ -1940,7 +1940,7 @@ export default function MilkTracker({
                             {selectedDirectFeeds.length}
                           </span>
                           <span className="day-milk-unit">
-                            {selectedDirectFeeds.length > 0 ? "x" : "no direct"}
+                            {selectedDirectFeeds.length > 0 ? "times" : "no direct"}
                           </span>
                           <span className="day-milk-label">Direct feed</span>
                         </div>
@@ -1980,14 +1980,16 @@ export default function MilkTracker({
                                     {formatTime(item.timestamp)}
                                   </span>
                                 </div>
-                                <button
-                                  type="button"
-                                  className="remove-btn"
-                                  onClick={() => removeAppeton(selectedDateKey)}
-                                  aria-label="Remove Appeton log"
-                                >
-                                  ×
-                                </button>
+                                {activeTab === "today" && (
+                                  <button
+                                    type="button"
+                                    className="remove-btn"
+                                    onClick={() => removeAppeton(selectedDateKey)}
+                                    aria-label="Remove Appeton log"
+                                  >
+                                    ×
+                                  </button>
+                                )}
                               </div>
                             </li>
                           );
@@ -2008,14 +2010,16 @@ export default function MilkTracker({
                                     {formatTime(p.timestamp)}
                                   </span>
                                 </div>
-                                <button
-                                  type="button"
-                                  className="remove-btn"
-                                  onClick={() => removePoop(p.id)}
-                                  aria-label="Remove poop log"
-                                >
-                                  ×
-                                </button>
+                                {activeTab === "today" && (
+                                  <button
+                                    type="button"
+                                    className="remove-btn"
+                                    onClick={() => removePoop(p.id)}
+                                    aria-label="Remove poop log"
+                                  >
+                                    ×
+                                  </button>
+                                )}
                               </div>
                             </li>
                           );
@@ -2036,14 +2040,16 @@ export default function MilkTracker({
                                    Done at {formatTime(df.timestamp)}
                                   </span>
                                 </div>
-                                <button
-                                  type="button"
-                                  className="remove-btn"
-                                  onClick={() => removeDirectFeed(df.id)}
-                                  aria-label="Remove direct feed log"
-                                >
-                                  ×
-                                </button>
+                                {activeTab === "today" && (
+                                  <button
+                                    type="button"
+                                    className="remove-btn"
+                                    onClick={() => removeDirectFeed(df.id)}
+                                    aria-label="Remove direct feed log"
+                                  >
+                                    ×
+                                  </button>
+                                )}
                               </div>
                             </li>
                           );
@@ -2065,14 +2071,16 @@ export default function MilkTracker({
                                   <span className="feed-note">{displayNote}</span>
                                 )}
                               </div>
-                              <button
-                                type="button"
-                                className="remove-btn"
-                                onClick={() => removeFeeding(f.id)}
-                                aria-label="Remove"
-                              >
-                                ×
-                              </button>
+                              {activeTab === "today" && (
+                                <button
+                                  type="button"
+                                  className="remove-btn"
+                                  onClick={() => removeFeeding(f.id)}
+                                  aria-label="Remove"
+                                >
+                                  ×
+                                </button>
+                              )}
                             </div>
                           </li>
                         );

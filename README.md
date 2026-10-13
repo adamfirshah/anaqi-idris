@@ -3,7 +3,7 @@
 A private family app for tracking Anaqi Idris's feeding, health, and daily care. Family members can record updates from different devices and see them sync in real time.
 
 ## Version
--Anaqi Idris 1.4
+-Anaqi Idris 1.6
 
 ## Features
 

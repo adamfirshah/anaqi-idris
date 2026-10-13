@@ -617,14 +617,16 @@ export default function PumpTracker({
                               </span>
                               <span className="feed-time">{formatTime(df.timestamp)}</span>
                             </div>
-                            <button
-                              type="button"
-                              className="remove-btn"
-                              onClick={() => onRemoveDirectFeed(df.id)}
-                              aria-label="Remove direct feed log"
-                            >
-                              ×
-                            </button>
+                            {activeTab === 'today' && (
+                              <button
+                                type="button"
+                                className="remove-btn"
+                                onClick={() => onRemoveDirectFeed(df.id)}
+                                aria-label="Remove direct feed log"
+                              >
+                                ×
+                              </button>
+                            )}
                           </div>
                         </li>
                       )
@@ -644,7 +646,7 @@ export default function PumpTracker({
                             <span className="feed-time">{formatTime(s.timestamp)}</span>
                             {displayNote && <span className="feed-note">{displayNote}</span>}
                           </div>
-                          {isFed(s) && (
+                          {activeTab === 'today' && isFed(s) && (
                             <button
                               type="button"
                               className="pump-fed-undo"
@@ -654,23 +656,27 @@ export default function PumpTracker({
                               Undo
                             </button>
                           )}
-                          <button
-                            type="button"
-                            className="pump-fed-btn"
-                            onClick={() => toggleFed(s.id, true)}
-                            disabled={isFed(s)}
-                            aria-label="Mark as fed"
-                          >
-                            Feed
-                          </button>
-                          <button
-                            type="button"
-                            className="remove-btn"
-                            onClick={() => removeSession(s.id)}
-                            aria-label="Remove"
-                          >
-                            ×
-                          </button>
+                          {activeTab === 'today' && (
+                            <button
+                              type="button"
+                              className="pump-fed-btn"
+                              onClick={() => toggleFed(s.id, true)}
+                              disabled={isFed(s)}
+                              aria-label="Mark as fed"
+                            >
+                              Feed
+                            </button>
+                          )}
+                          {activeTab === 'today' && (
+                            <button
+                              type="button"
+                              className="remove-btn"
+                              onClick={() => removeSession(s.id)}
+                              aria-label="Remove"
+                            >
+                              ×
+                            </button>
+                          )}
                         </div>
                       </li>
                     )
