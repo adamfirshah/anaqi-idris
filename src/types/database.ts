@@ -50,6 +50,7 @@ export interface PumpSessionRow {
   duration_min: number | null
   note: string | null
   logged_by: string | null
+  fed: boolean | null
   created_at: string
 }
 
@@ -60,6 +61,7 @@ export interface PumpSession {
   side: PumpSide | null
   durationMin: number | null
   note: string
+  fed: boolean
 }
 
 export function rowToPumpSession(row: PumpSessionRow): PumpSession {
@@ -70,6 +72,7 @@ export function rowToPumpSession(row: PumpSessionRow): PumpSession {
     side: row.side,
     durationMin: row.duration_min,
     note: row.note ?? '',
+    fed: row.fed ?? false,
   }
 }
 

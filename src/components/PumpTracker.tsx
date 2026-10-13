@@ -24,6 +24,25 @@ const PUMP_WARN_MS = 30 * 60 * 1000
 const QUICK_OZ = [1, 1.5, 2, 2.5, 3, 4]
 const FORGOT_AGO_MIN = [15, 30, 45, 60] as const
 
+const FED_IDS_KEY = 'pump-fed-ids'
+
+function loadFedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FED_IDS_KEY)
+    return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function saveFedIds(ids: Set<string>) {
+  try {
+    localStorage.setItem(FED_IDS_KEY, JSON.stringify([...ids]))
+  } catch {
+    // storage unavailable — fed state stays in memory only
+  }
+}
+
 type Status = 'none' | 'ok' | 'due' | 'overdue'
 
 function getStatus(lastTs: number | null, now: number): Status {
@@ -70,6 +89,8 @@ export default function PumpTracker({
   const [forgotOpen, setForgotOpen] = useState(false)
   const [forgotTime, setForgotTime] = useState(() => toTimeInputValue(Date.now() - 30 * 60 * 1000))
   const [error, setError] = useState('')
+  const [fedIds, setFedIds] = useState<Set<string>>(loadFedIds)
+  const isFed = (s: PumpSession) => s.fed || fedIds.has(s.id)
 
   const fetchSessions = useCallback(async () => {
     const { data, error: fetchError } = await supabase
@@ -125,7 +146,7 @@ export default function PumpTracker({
   const todaySessions = sessions.filter(
     s => new Date(s.timestamp).toDateString() === todayStr(),
   )
-  const dailyOz = todaySessions.reduce((sum, s) => sum + s.oz, 0)
+  const dailyOz = todaySessions.reduce((sum, s) => (isFed(s) ? sum : sum + s.oz), 0)
   const todayDirectFeeds = directFeeds.filter(
     s => new Date(s.timestamp).toDateString() === todayStr(),
   )
@@ -209,6 +230,28 @@ export default function PumpTracker({
       else fetchSessions()
     },
     [fetchSessions],
+  )
+
+  const toggleFed = useCallback(
+    async (id: string, fed: boolean) => {
+      setError('')
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, fed } : s)))
+      setFedIds((prev) => {
+        const next = new Set(prev)
+        if (fed) next.add(id)
+        else next.delete(id)
+        saveFedIds(next)
+        return next
+      })
+      // Sync to DB when the `fed` column exists (supabase/pump_sessions_fed.sql);
+      // local state above keeps the button working either way.
+      const { error: updateError } = await supabase
+        .from('pump_sessions')
+        .update({ fed })
+        .eq('id', id)
+      if (updateError && !['42703', 'PGRST204'].includes(updateError.code)) setError(updateError.message)
+    },
+    [],
   )
 
   if (loading) {
@@ -601,6 +644,25 @@ export default function PumpTracker({
                             <span className="feed-time">{formatTime(s.timestamp)}</span>
                             {displayNote && <span className="feed-note">{displayNote}</span>}
                           </div>
+                          {isFed(s) && (
+                            <button
+                              type="button"
+                              className="pump-fed-undo"
+                              onClick={() => toggleFed(s.id, false)}
+                              aria-label="Undo fed"
+                            >
+                              Undo
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="pump-fed-btn"
+                            onClick={() => toggleFed(s.id, true)}
+                            disabled={isFed(s)}
+                            aria-label="Mark as fed"
+                          >
+                            Feed
+                          </button>
                           <button
                             type="button"
                             className="remove-btn"

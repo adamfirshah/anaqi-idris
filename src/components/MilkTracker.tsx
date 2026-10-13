@@ -2033,7 +2033,7 @@ export default function MilkTracker({
                                     Direct feed with Idris!
                                   </span>
                                   <span className="feed-time">
-                                    {formatTime(df.timestamp)}
+                                   Done at {formatTime(df.timestamp)}
                                   </span>
                                 </div>
                                 <button

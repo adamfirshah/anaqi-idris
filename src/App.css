@@ -917,6 +917,39 @@
 }
 .remove-btn:active { background: #fca5a5; color: #ef4444; }
 
+.pump-fed-btn {
+  flex-shrink: 0;
+  margin-right: 0.4rem;
+  padding: 0.25rem 0.7rem;
+  border: none;
+  border-radius: 999px;
+  background: #fce7f3;
+  color: #db2777;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
+}
+.pump-fed-btn:active:not(:disabled) { background: #fbcfe8; }
+.pump-fed-btn:disabled {
+  background: #e2e8f0;
+  color: #94a3b8;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.pump-fed-undo {
+  flex-shrink: 0;
+  margin-right: 0.3rem;
+  padding: 0.25rem 0.3rem;
+  border: none;
+  background: none;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* ─── Grouped history ────────────────────────────────────────── */
 .history-day { margin-bottom: 1.25rem; }
 .history-day:last-child { margin-bottom: 0; }
