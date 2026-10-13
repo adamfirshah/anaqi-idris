@@ -147,6 +147,7 @@ export default function PumpTracker({
     s => new Date(s.timestamp).toDateString() === todayStr(),
   )
   const dailyOz = todaySessions.reduce((sum, s) => (isFed(s) ? sum : sum + s.oz), 0)
+  const fedFreshCount = todaySessions.filter(isFed).length
   const todayDirectFeeds = directFeeds.filter(
     s => new Date(s.timestamp).toDateString() === todayStr(),
   )
@@ -365,7 +366,7 @@ export default function PumpTracker({
         </div>
       )}
 
-      <div className="stats-row">
+      <div className="stats-row stats-row-pump">
         <div className="stat-box pump-stat">
           <span className="stat-value">{todaySessions.length}</span>
           <p className="stat-label">Sessions</p>
@@ -374,6 +375,10 @@ export default function PumpTracker({
           <span className="stat-value">{dailyOz.toFixed(1)}</span>
           <span className="stat-unit">oz</span>
           <p className="stat-label">Pumped today</p>
+        </div>
+        <div className="stat-box pump-stat">
+          <span className="stat-value">{fedFreshCount}</span>
+          <p className="stat-label">Fed Fresh</p>
         </div>
         <div className="stat-box pump-stat">
           <span className="stat-value">

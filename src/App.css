@@ -175,6 +175,9 @@
   line-height: 1.3;
 }
 .stats-row-secondary { margin-bottom: 0.5rem; }
+.stats-row-pump { grid-template-columns: repeat(6, 1fr); }
+.stats-row-pump > .stat-box { grid-column: span 2; }
+.stats-row-pump > .stat-box:nth-child(n + 4) { grid-column: span 3; }
 .stats-row-milk {
   grid-template-columns: repeat(3, 1fr);
   margin-bottom: 0.875rem;
